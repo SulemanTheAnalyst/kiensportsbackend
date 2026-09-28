@@ -23,7 +23,7 @@ export interface PaymentGateway {
   // Minimal order shape providers need; decoupled from the caller's Prisma include.
   createOrder(order: PayableOrder, payment: Prisma.PaymentGetPayload<Record<string, never>>): Promise<PaymentSession>;
   verifyWebhook(rawBody: Buffer, signature: string | undefined, headers: Record<string, string | string[] | undefined>): WebhookEvent | null;
-  refund(providerPaymentId: string, amountPaise: number, providerRefundId: string): Promise<{ status: string }>;
+  refund(providerPaymentId: string, amountPaise: number, providerRefundId?: string): Promise<{ status: string }>;
 }
 
 // An order carrying its payment records - the minimum createOrder + session

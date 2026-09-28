@@ -5,12 +5,12 @@ import { computeTotals, paiseToRupees } from '../../lib/money';
 import { ApiError } from '../../lib/errors';
 
 // Validated include + explicit payload type (Prisma's documented pattern).
-export const cartInclude = Prisma.validator<Prisma.CartDefaultArgs>()({
+export const cartInclude = Prisma.validator<Prisma.CartInclude>()({
   items: {
     include: {
       variant: {
         include: {
-          product: { include: { images: { orderBy: { sortOrder: 'asc' } } } },
+          product: { include: { images: { orderBy: { sortOrder: 'asc' as const } } } },
           inventory: true,
         },
       },

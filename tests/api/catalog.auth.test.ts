@@ -69,7 +69,7 @@ run('catalog + cart + auth API (integration)', () => {
       .send({ email, password: 'Password123', firstName: 'Test', lastName: 'User' });
     expect(res.status).toBe(201);
     expect(res.body.data.accessToken).toBeTruthy();
-    expect(res.headers['set-cookie'].some((c: string) => c.startsWith('kien_refresh'))).toBe(true);
+    expect((res.headers['set-cookie'] as unknown as string[]).some((c: string) => c.startsWith('kien_refresh'))).toBe(true);
   });
 
   it('does not allow duplicate registration', async () => {
