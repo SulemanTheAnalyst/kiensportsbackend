@@ -146,7 +146,7 @@ adminRouter.patch(
   '/products/:id',
   validate({ params: z.object({ id: z.string().min(10).max(40) }), body: productBodySchema.partial() }),
   async (req, res) => {
-    const existing = await prisma.product.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.product.findUnique({ where: { id: String(req.params.id) } });
     if (!existing) throw notFound('Product not found');
     const body = req.body as Partial<z.infer<typeof productBodySchema>>;
     const data: Prisma.ProductUpdateInput = {};
@@ -254,7 +254,7 @@ adminRouter.post(
   }),
   async (req, res) => {
     const order = await prisma.order.findUnique({
-      where: { orderNumber: req.params.orderNumber },
+      where: { orderNumber: String(req.params.orderNumber) },
       include: { items: true, statusEvents: true },
     });
     if (!order) throw notFound('Order not found');

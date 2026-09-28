@@ -94,7 +94,7 @@ adminReturnsRouter.patch(
     }),
   }),
   async (req, res) => {
-    const rr = await prisma.returnRequest.findUnique({ where: { id: req.params.id } });
+    const rr = await prisma.returnRequest.findUnique({ where: { id: String(req.params.id) } });
     if (!rr) throw notFound('Return request not found');
     const updated = await prisma.returnRequest.update({
       where: { id: rr.id },

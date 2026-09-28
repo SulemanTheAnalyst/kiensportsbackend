@@ -54,7 +54,7 @@ adminContactRouter.patch(
   }),
   async (req, res) => {
     const msg = await prisma.contactMessage.update({
-      where: { id: req.params.id },
+      where: { id: String(req.params.id) },
       data: { status: req.body.status },
     });
     res.json({ data: msg });

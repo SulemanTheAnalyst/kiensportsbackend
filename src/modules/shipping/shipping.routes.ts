@@ -17,7 +17,7 @@ shippingRouter.get(
   validate({ params: z.object({ orderNumber: z.string().min(6).max(40) }) }),
   async (req: Request, res: Response) => {
     const order = await prisma.order.findUnique({
-      where: { orderNumber: req.params.orderNumber },
+      where: { orderNumber: String(req.params.orderNumber) },
       include: { shipments: true },
     });
     if (!order || order.userId !== req.user!.sub) throw notFound('Shipment not found');
@@ -47,7 +47,7 @@ adminShippingRouter.patch(
     }),
   }),
   async (req: Request, res: Response) => {
-    const shipment = await prisma.shipment.findUnique({ where: { id: req.params.id }, include: { order: true } });
+    const shipment = await prisma.shipment.findUnique({ where: { id: String(req.params.id) }, include: { order: true } });
     if (!shipment) throw notFound('Shipment not found');
     const { carrier, trackingNumber, status } = req.body;
     const updated = await prisma.$transaction(async (tx) => {

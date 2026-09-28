@@ -16,7 +16,7 @@ reviewsRouter.get(
   validate({ params: z.object({ productId: z.string().min(10).max(40) }) }),
   async (req, res) => {
     const reviews = await prisma.review.findMany({
-      where: { productId: req.params.productId, moderationStatus: 'APPROVED' },
+      where: { productId: String(req.params.productId), moderationStatus: 'APPROVED' },
       orderBy: { createdAt: 'desc' },
       include: { user: { select: { firstName: true } } },
     });
@@ -54,7 +54,7 @@ reviewsRouter.post(
     }),
   }),
   async (req, res) => {
-    const product = await prisma.product.findFirst({ where: { id: req.params.productId, status: 'ACTIVE' } });
+    const product = await prisma.product.findFirst({ where: { id: String(req.params.productId), status: 'ACTIVE' } });
     if (!product) throw notFound('Product not found');
     const existing = await prisma.review.findUnique({
       where: { productId_userId: { productId: product.id, userId: req.user!.sub } },
@@ -100,7 +100,7 @@ adminReviewsRouter.patch(
     body: z.object({ status: z.enum(['APPROVED', 'REJECTED']), note: z.string().max(500).optional() }),
   }),
   async (req, res) => {
-    const review = await prisma.review.findUnique({ where: { id: req.params.id } });
+    const review = await prisma.review.findUnique({ where: { id: String(req.params.id) } });
     if (!review) throw notFound('Review not found');
     const updated = await prisma.review.update({
       where: { id: review.id },

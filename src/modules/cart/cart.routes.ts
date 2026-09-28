@@ -40,7 +40,7 @@ cartRouter.patch(
   }),
   async (req, res) => {
     const cart = await getOrCreateCart(req);
-    const updated = await updateItem(cart.id, req.params.itemId, req.body.quantity);
+    const updated = await updateItem(cart.id, String(req.params.itemId), req.body.quantity);
     res.json({ data: serializeCart(updated) });
   },
 );
@@ -50,7 +50,7 @@ cartRouter.delete(
   validate({ params: z.object({ itemId: z.string().min(10).max(40) }) }),
   async (req, res) => {
     const cart = await getOrCreateCart(req);
-    const updated = await removeItem(cart.id, req.params.itemId);
+    const updated = await removeItem(cart.id, String(req.params.itemId));
     res.json({ data: serializeCart(updated) });
   },
 );

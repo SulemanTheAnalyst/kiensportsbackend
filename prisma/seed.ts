@@ -192,7 +192,10 @@ const seed = async () => {
         collection: { connect: { slug: p.collectionSlug } },
         images: { create: p.images.map((i, idx) => ({ url: i.url, alt: i.alt, sortOrder: idx })) },
         features: {
-          create: p.features.map(([title, description], idx) => ({ title, description, sortOrder: idx })),
+          // tuples are [title, description, icon|null]
+          create: (p.features as [string, string, string | null][]).map(
+            ([title, description, icon], idx) => ({ title, description, icon, sortOrder: idx }),
+          ),
         },
         variants: {
           create: p.variants.map((v) => ({

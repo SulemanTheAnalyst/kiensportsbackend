@@ -19,7 +19,7 @@ declare global {
 }
 
 export const signAccessToken = (payload: AccessPayload): string =>
-  jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: env.ACCESS_TOKEN_TTL });
+  jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: env.ACCESS_TOKEN_TTL as jwt.SignOptions['expiresIn'] });
 
 export const requireAuth = (req: Request, _res: Response, next: NextFunction) => {
   const header = req.headers.authorization;

@@ -27,7 +27,7 @@ catalogRouter.get(
   '/products/:slug',
   validate({ params: z.object({ slug: z.string().min(1).max(120) }) }),
   async (req, res) => {
-    res.json({ data: await getProductBySlug(req.params.slug) });
+    res.json({ data: await getProductBySlug(String(req.params.slug)) });
   },
 );
 

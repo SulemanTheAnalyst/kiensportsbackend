@@ -56,7 +56,7 @@ orderRouter.get(
   '/:orderNumber/status',
   validate({ params: z.object({ orderNumber: z.string().min(6).max(40) }) }),
   async (req, res) => {
-    const order = await prisma.order.findUnique({ where: { orderNumber: req.params.orderNumber } });
+    const order = await prisma.order.findUnique({ where: { orderNumber: String(req.params.orderNumber) } });
     if (!order) throw badRequest('Order not found');
     // Public payload: only statuses and order number - no PII.
     res.json({
@@ -70,7 +70,7 @@ orderRouter.get(
   optionalAuth,
   validate({ params: z.object({ orderNumber: z.string().min(6).max(40) }) }),
   async (req, res) => {
-    res.json({ data: await getOrderForCustomer(req.user?.sub ?? null, req.params.orderNumber, true) });
+    res.json({ data: await getOrderForCustomer(req.user?.sub ?? null, String(req.params.orderNumber), true) });
   },
 );
 
@@ -80,7 +80,7 @@ export const paymentWebhookRouter = Router();
 
 // Raw body is required for signature verification (configured in app.ts).
 paymentWebhookRouter.post('/webhook/:provider', async (req, res) => {
-  const provider = req.params.provider;
+  const provider = String(req.params.provider);
   if (provider !== paymentService.providerName() && provider !== 'razorpay') {
     throw badRequest('Unknown payment provider');
   }

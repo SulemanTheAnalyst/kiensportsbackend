@@ -87,7 +87,7 @@ accountRouter.patch(
   '/addresses/:id',
   validate({ params: z.object({ id: z.string().min(10).max(40) }), body: addressSchema.partial() }),
   async (req, res) => {
-    const existing = await prisma.address.findFirst({ where: { id: req.params.id, userId: req.user!.sub } });
+    const existing = await prisma.address.findFirst({ where: { id: String(req.params.id), userId: req.user!.sub } });
     if (!existing) throw notFound('Address not found');
     const { isDefault } = req.body;
     const address = await prisma.$transaction(async (tx) => {
@@ -104,7 +104,7 @@ accountRouter.delete(
   '/addresses/:id',
   validate({ params: z.object({ id: z.string().min(10).max(40) }) }),
   async (req, res) => {
-    const existing = await prisma.address.findFirst({ where: { id: req.params.id, userId: req.user!.sub } });
+    const existing = await prisma.address.findFirst({ where: { id: String(req.params.id), userId: req.user!.sub } });
     if (!existing) throw notFound('Address not found');
     await prisma.address.delete({ where: { id: existing.id } });
     res.json({ data: { ok: true } });
@@ -150,7 +150,7 @@ accountRouter.post(
   validate({ params: z.object({ productId: z.string().min(10).max(40) }) }),
   async (req, res) => {
     const product = await prisma.product.findFirst({
-      where: { id: req.params.productId, status: 'ACTIVE' },
+      where: { id: String(req.params.productId), status: "ACTIVE" },
     });
     if (!product) throw notFound('Product not found');
     await prisma.wishlistItem.upsert({
@@ -167,7 +167,7 @@ accountRouter.delete(
   validate({ params: z.object({ productId: z.string().min(10).max(40) }) }),
   async (req, res) => {
     await prisma.wishlistItem.deleteMany({
-      where: { userId: req.user!.sub, productId: req.params.productId },
+      where: { userId: req.user!.sub, productId: String(req.params.productId) },
     });
     res.json({ data: { ok: true } });
   },
