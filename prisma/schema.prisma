@@ -39,6 +39,7 @@ model User {
   wishlistItems  WishlistItem[]
   refreshTokens  RefreshToken[]
   auditLogs      AuditLog[]
+  carts          Cart[]
 
   @@index([email])
 }
@@ -201,6 +202,7 @@ model ProductVariant {
   inventory Inventory?
   cartItems CartItem[]
   orderItems OrderItem[]
+  wishlistItems WishlistItem[]
 
   @@index([productId])
 }
