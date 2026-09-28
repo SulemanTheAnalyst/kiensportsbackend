@@ -91,8 +91,10 @@ export const listProducts = async (q: ListProductsQuery) => {
   const page = Math.max(1, q.page ?? 1);
   const limit = Math.min(60, Math.max(1, q.limit ?? 24));
   const where: Prisma.ProductWhereInput = { status: ProductStatus.ACTIVE };
-  if (q.category) where.category = { world: q.category };
-  if (q.subcategory) where.category = { ...where.category, slug: q.subcategory };
+  const categoryFilter: Prisma.CategoryWhereInput = {};
+  if (q.category) categoryFilter.world = q.category;
+  if (q.subcategory) categoryFilter.slug = q.subcategory;
+  if (q.category || q.subcategory) where.category = categoryFilter;
   if (q.collection) where.collection = { slug: q.collection };
   if (q.featured) where.isFeatured = true;
   if (q.newArrival) where.isNewArrival = true;

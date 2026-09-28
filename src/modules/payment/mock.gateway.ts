@@ -1,7 +1,7 @@
 import { createHmac, randomBytes } from 'crypto';
-import { PaymentMethod, Prisma } from '@prisma/client';
+import { Payment, PaymentMethod } from '@prisma/client';
 import { logger } from '../../lib/logger';
-import type { PaymentGateway, PaymentSession, WebhookEvent } from './gateway.types';
+import type { PayableOrder, PaymentGateway, PaymentSession, WebhookEvent } from './gateway.types';
 
 // Reads the secret directly from process.env so the gateway is testable
 // without booting the full validated environment.
@@ -17,7 +17,7 @@ export class MockGateway implements PaymentGateway {
     return method === PaymentMethod.CARD || method === PaymentMethod.UPI || method === PaymentMethod.COD;
   }
 
-  async createOrder(order, payment): Promise<PaymentSession> {
+  async createOrder(order: PayableOrder, payment: Payment): Promise<PaymentSession> {
     const providerOrderId = 'mock_order_' + randomBytes(8).toString('hex');
     return {
       provider: this.name,
@@ -47,7 +47,7 @@ export class MockGateway implements PaymentGateway {
   }
 
   // Mock webhooks are "verified" by their HMAC token (see mockPay route).
-  verifyWebhook(_rawBody: Buffer, _signature, _headers): WebhookEvent | null {
+  verifyWebhook(_rawBody: Buffer, _signature: string | undefined, _headers: Record<string, string | string[] | undefined>): WebhookEvent | null {
     return null; // mock uses its own dedicated simulator route instead
   }
 

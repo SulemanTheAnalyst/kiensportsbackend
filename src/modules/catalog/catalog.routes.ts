@@ -51,7 +51,7 @@ catalogRouter.get(
     query: z.object({ q: z.string().min(2).max(100), limit: z.coerce.number().int().min(1).max(20).optional() }),
   }),
   async (req, res) => {
-    const { q, limit } = req.query as { q: string; limit?: number };
+    const { q, limit } = req.query as unknown as { q: string; limit?: number };
     const result = await listProducts({ search: q, limit: limit ?? 8, page: 1 });
     res.json({ data: result.data });
   },

@@ -85,7 +85,7 @@ export const createOrder = async (
         shippingPaise: totals.shippingPaise,
         taxPaise: totals.taxPaise,
         totalPaise: totals.totalPaise,
-        shippingAddress: input.address,
+        shippingAddress: input.address as unknown as Prisma.InputJsonValue,
         items: { create: lines.map(({ variantId, ...rest }) => ({ ...rest, variant: { connect: { id: variantId } } })) },
         statusEvents: { create: { fromStatus: 'NONE', toStatus: 'PENDING_PAYMENT', note: 'Order created' } },
       },

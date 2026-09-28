@@ -2,6 +2,7 @@ import { Request } from 'express';
 import { prisma } from '../../lib/prisma';
 import { randomToken } from '../../lib/ids';
 import { isProd } from '../../config/env';
+import { cartInclude, type Cart } from './cart.service';
 
 export const CART_COOKIE = 'kien_cart';
 
@@ -16,7 +17,7 @@ export const cartCookieOptions = {
 // Find or create the cart bound to the kien_cart cookie.
 // When an authenticated user exists, the cart is (re)attached to that user,
 // merging a guest cart into the account cart after login.
-export const getOrCreateCart = async (req: Request) => {
+export const getOrCreateCart = async (req: Request): Promise<Cart> => {
   const token = req.cookies?.[CART_COOKIE] as string | undefined;
   const userId = req.user?.sub;
 
@@ -28,9 +29,9 @@ export const getOrCreateCart = async (req: Request) => {
         return merged;
       }
       if (userId && !existing.userId) {
-        return prisma.cart.update({ where: { id: existing.id }, data: { userId }, include: cartInclude });
+        return (await prisma.cart.update({ where: { id: existing.id }, data: { userId }, include: cartInclude })) as Cart;
       }
-      return prisma.cart.findUniqueOrThrow({ where: { id: existing.id }, include: cartInclude });
+      return (await prisma.cart.findUniqueOrThrow({ where: { id: existing.id }, include: cartInclude })) as Cart;
     }
   }
 
@@ -38,7 +39,7 @@ export const getOrCreateCart = async (req: Request) => {
     data: { sessionToken: randomToken(24), userId: userId ?? null },
     include: cartInclude,
   });
-  return cart;
+  return cart as unknown as Cart;
 };
 
 export const setCartCookieIfNeeded = (req: Request, res: { cookie: (name: string, val: string, opts: unknown) => void }, cart: { sessionToken: string }) => {
@@ -47,21 +48,15 @@ export const setCartCookieIfNeeded = (req: Request, res: { cookie: (name: string
   }
 };
 
-const cartInclude = {
-  items: {
-    include: { variant: { include: { product: { include: { images: { orderBy: { sortOrder: 'asc' as const } } } } }, inventory: true } },
-  },
-} as const;
-
 // Merge guest cart into the user's active cart; dedupe by variant.
-const mergeCarts = async (guestCartId: string, userId: string) => {
+const mergeCarts = async (guestCartId: string, userId: string): Promise<Cart> => {
   return prisma.$transaction(async (tx) => {
     const [guest, userCart] = await Promise.all([
       tx.cart.findUniqueOrThrow({ where: { id: guestCartId }, include: { items: true } }),
       tx.cart.findFirst({ where: { userId, status: 'ACTIVE' }, include: { items: true } }),
     ]);
     if (!userCart) {
-      return tx.cart.update({ where: { id: guestCartId }, data: { userId }, include: cartInclude });
+      return (await tx.cart.update({ where: { id: guestCartId }, data: { userId }, include: cartInclude })) as Cart;
     }
     if (userCart.id !== guest.id) {
       for (const item of guest.items) {
@@ -75,6 +70,6 @@ const mergeCarts = async (guestCartId: string, userId: string) => {
       }
       await tx.cart.update({ where: { id: guestCartId }, data: { status: 'CONVERTED' } });
     }
-    return tx.cart.findUniqueOrThrow({ where: { id: userCart.id }, include: cartInclude });
+    return (await tx.cart.findUniqueOrThrow({ where: { id: userCart.id }, include: cartInclude })) as Cart;
   });
 };

@@ -80,7 +80,7 @@ export const issueTokens = async (userId: string, roles: string[]) => {
 };
 
 const signAccess = (userId: string, roles: string[]) =>
-  jwt.sign({ sub: userId, roles }, env.JWT_ACCESS_SECRET, { expiresIn: env.ACCESS_TOKEN_TTL });
+  jwt.sign({ sub: userId, roles }, env.JWT_ACCESS_SECRET, { expiresIn: env.ACCESS_TOKEN_TTL as jwt.SignOptions["expiresIn"] });
 
 // Rotating refresh: validates the presented token, revokes it, issues a new pair.
 // If a token is presented twice (reuse after theft), the whole chain is revoked.

@@ -5,7 +5,7 @@ import { logger } from '../../lib/logger';
 import { prisma } from '../../lib/prisma';
 import { MockGateway } from './mock.gateway';
 import { RazorpayGateway } from './razorpay.gateway';
-import type { PaymentGateway, PaymentSession } from './gateway.types';
+import type { PayableOrder, PaymentGateway, PaymentSession } from './gateway.types';
 import { confirmOrderPayment } from '../order/order.service';
 
 // The gateway is a singleton chosen at boot via PAYMENT_PROVIDER.
@@ -31,7 +31,7 @@ export const paymentService = {
 
   // Create the provider session for an order's latest CREATED payment.
   async createPaymentSession(
-    order: Prisma.OrderGetPayload<{ include: { items: true; payments: true } }>,
+    order: PayableOrder,
   ): Promise<PaymentSession> {
     const payment = order.payments.find((p) => p.status === 'CREATED') ?? order.payments[order.payments.length - 1];
     if (!payment) throw notFound('Payment record missing for order ' + order.orderNumber);

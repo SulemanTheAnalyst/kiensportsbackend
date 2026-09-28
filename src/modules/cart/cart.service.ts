@@ -1,18 +1,27 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { notFound, outOfStock } from '../../lib/errors';
 import { computeTotals, paiseToRupees } from '../../lib/money';
 import { ApiError } from '../../lib/errors';
 
-type Cart = NonNullable<Awaited<ReturnType<typeof getActiveCart>>>;
-
-const cartInclude = {
+// Validated include + explicit payload type (Prisma's documented pattern).
+export const cartInclude = Prisma.validator<Prisma.CartDefaultArgs>()({
   items: {
-    include: { variant: { include: { product: { include: { images: { orderBy: { sortOrder: 'asc' as const } } } } }, inventory: true } },
+    include: {
+      variant: {
+        include: {
+          product: { include: { images: { orderBy: { sortOrder: 'asc' } } } },
+          inventory: true,
+        },
+      },
+    },
   },
-} as const;
+});
 
-export const getActiveCart = (cartId: string) =>
-  prisma.cart.findUnique({ where: { id: cartId }, include: cartInclude });
+export type Cart = Prisma.CartGetPayload<{ include: typeof cartInclude }>;
+
+export const getActiveCart = (cartId: string): Promise<Cart | null> =>
+  prisma.cart.findUnique({ where: { id: cartId }, include: cartInclude }) as Promise<Cart | null>;
 
 // Never trust client prices: the unit price is always resolved from the DB.
 export const resolveUnitPricePaise = async (variantId: string): Promise<number> => {

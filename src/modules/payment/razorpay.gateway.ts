@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import Razorpay from 'razorpay';
-import { PaymentMethod, Prisma } from '@prisma/client';
-import type { PaymentGateway, PaymentSession, WebhookEvent } from './gateway.types';
+import { Payment, PaymentMethod, Prisma } from '@prisma/client';
+import type { PayableOrder, PaymentGateway, PaymentSession, WebhookEvent } from './gateway.types';
 
 // Reads the secret directly from process.env so the gateway is testable
 // without booting the full validated environment.
@@ -21,7 +21,7 @@ export class RazorpayGateway implements PaymentGateway {
     return method !== PaymentMethod.COD; // COD is not gateway-captured
   }
 
-  async createOrder(order, payment): Promise<PaymentSession> {
+  async createOrder(order: PayableOrder, payment: Payment): Promise<PaymentSession> {
     const rpOrder = await this.client.orders.create({
       amount: order.totalPaise,
       currency: 'INR',
@@ -41,7 +41,7 @@ export class RazorpayGateway implements PaymentGateway {
     };
   }
 
-  verifyWebhook(rawBody: Buffer, signature: string | undefined): WebhookEvent | null {
+  verifyWebhook(rawBody: Buffer, signature: string | undefined, _headers: Record<string, string | string[] | undefined> = {}): WebhookEvent | null {
     if (!signature) return null;
     const expected = createHmac('sha256', webhookSecret()).update(rawBody).digest('hex');
     const a = Buffer.from(expected);
