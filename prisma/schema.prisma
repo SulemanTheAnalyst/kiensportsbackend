@@ -13,7 +13,7 @@ datasource db {
 
 // ---------------------------------------------------------------- users
 
-enum Role {
+enum RoleName {
   CUSTOMER
   ADMIN
 }
@@ -55,8 +55,8 @@ model UserRole {
 }
 
 model Role {
-  id   String @id @default(cuid())
-  name Role   @unique
+  id   String   @id @default(cuid())
+  name RoleName @unique
   users UserRole[]
 }
 
