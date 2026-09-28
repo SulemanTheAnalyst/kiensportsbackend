@@ -40,12 +40,15 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          # Note: enable `cache: npm` once package-lock.json is committed
-          # (generate it locally with `npm install` and commit the lockfile).
+          node-version: 22
+          # Note: enable `cache: npm` and switch to `npm ci` once
+          # package-lock.json is committed (generate it locally with
+          # `npm install` and commit the lockfile).
 
       - name: Install dependencies
-        run: npm ci
+        # `npm ci` requires a committed package-lock.json; use npm install
+        # until the lockfile is committed.
+        run: npm install
 
       - name: Prisma generate
         run: npx prisma generate
