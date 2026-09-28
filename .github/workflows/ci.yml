@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kien
+          POSTGRES_PASSWORD: kien
+          POSTGRES_DB: kiensports
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kien"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://kien:kien@localhost:5432/kiensports?schema=public
+      JWT_ACCESS_SECRET: ci-access-secret-0123456789abcdef
+      JWT_REFRESH_SECRET: ci-refresh-secret-0123456789abcdef
+      PAYMENT_PROVIDER: mock
+      PAYMENT_WEBHOOK_SECRET: ci-webhook-secret
+      CORS_ORIGIN: http://localhost:5173
+      ADMIN_EMAIL: ci-admin@kiensports.com
+      ADMIN_PASSWORD: ci-admin-password-123
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npx tsc -p tsconfig.json --outDir dist-check
+
+      - name: Push schema to CI database
+        run: npx prisma db push
+
+      - name: Seed real catalog
+        run: npx tsx prisma/seed.ts
+
+      - name: Run tests (unit + API integration)
+        run: npx vitest run

@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kien
+      POSTGRES_PASSWORD: kien
+      POSTGRES_DB: kiensports
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U kien']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://kien:kien@db:5432/kiensports?schema=public
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      PAYMENT_PROVIDER: mock
+      PAYMENT_WEBHOOK_SECRET: dev-webhook-secret
+      CORS_ORIGIN: http://localhost:5173
+    ports:
+      - '3000:3000'
+    command: sh -c "npx prisma migrate deploy && npx tsx src/server.ts"
+
+volumes:
+  pgdata:
