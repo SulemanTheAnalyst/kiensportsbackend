@@ -16,6 +16,7 @@ import { newsletterRouter, adminNewsletterRouter } from './modules/newsletter/ne
 import { contactRouter, adminContactRouter } from './modules/contact/contact.routes';
 import { adminRouter } from './modules/admin/admin.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
+import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
 
 export const createApp = (): Express => {
   const app = express();
@@ -69,7 +70,17 @@ export const createApp = (): Express => {
   api.use('/payments', paymentWebhookRouter);
 
   // Admin - all routes below require ADMIN role
-  api.use('/admin', adminRouter, adminShippingRouter, adminReturnsRouter, adminReviewsRouter, adminNewsletterRouter, adminContactRouter, adminReportsRouter);
+  api.use(
+    '/admin',
+    adminRouter,
+    adminShippingRouter,
+    adminReturnsRouter,
+    adminReviewsRouter,
+    adminNewsletterRouter,
+    adminContactRouter,
+    adminReportsRouter,
+    adminCatalogRouter
+  );
 
   app.use(env.API_BASE_PATH, api);
   app.use(notFoundHandler);
