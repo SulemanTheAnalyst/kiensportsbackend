@@ -46,9 +46,9 @@ jobs:
           # `npm install` and commit the lockfile).
 
       - name: Install dependencies
-        # `npm ci` requires a committed package-lock.json; use npm install
-        # until the lockfile is committed.
-        run: npm install
+        # package-lock.json is now committed and complete; npm ci verifies
+        # lockfile/package.json consistency on every run (mirrors Docker).
+        run: npm ci
 
       - name: Prisma generate
         run: npx prisma generate
