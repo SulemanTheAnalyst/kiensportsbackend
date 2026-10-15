@@ -2,6 +2,7 @@
   "name": "kiensports-backend",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "KIEN Sports Private Limited - e-commerce backend API",
   "main": "dist/server.js",
   "type": "commonjs",

@@ -95,3 +95,10 @@ docker run -e DATABASE_URL=... -e JWT_ACCESS_SECRET=... ... kien-api
 Requirements for production: `NODE_ENV=production`, a real `PAYMENT_PROVIDER` (the mock
 refuses to boot in production), `CORS_ORIGIN` set to the live KIEN domain, HTTPS
 termination in front, and secrets from the platform's secret store.
+
+## License
+
+This project is proprietary software owned by KIEN Sports Private Limited.
+See [LICENSE](./LICENSE). No permission to copy, distribute, modify, or
+commercially exploit the code is granted without written authorization.
+Third-party dependencies remain governed by their own open-source licenses.
