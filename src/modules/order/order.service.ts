@@ -7,6 +7,7 @@ import { getOrCreateCart } from '../cart/cart.session';
 import { validateCartForCheckout } from '../cart/cart.service';
 import type { Request } from 'express';
 import { paymentService } from '../payment/payment.service';
+import { notifyOrderConfirmed } from '../email/order.emails';
 
 const orderInclude = {
   items: true,
@@ -259,6 +260,10 @@ export const confirmOrderPayment = async (providerPaymentId: string) => {
     await tx.shipment.create({ data: { orderId: order.id } });
     return order;
   });
+  // Transaction committed and payment VERIFIED: safe to notify the customer
+  // and the business. Best-effort, idempotent (replays of an already-captured
+  // payment return above and never reach this line). Never inside the tx.
+  notifyOrderConfirmed(order.orderNumber);
 };
 
 // Release reservations if a payment is definitively failed/expired.

@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { notFound } from '../../lib/errors';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireRole } from '../../middleware/auth';
+import { notifyRefundCompleted } from '../email/order.emails';
 
 // Returns/refunds foundation. Business rules (return window, conditions) are
 // data-driven status fields; admin approves/inspects/completes.
@@ -119,6 +120,8 @@ adminReturnsRouter.patch(
           status: 'INITIATED',
         },
       });
+      // Best-effort refund notification AFTER the refund record was created.
+      notifyRefundCompleted(rr.id);
     }
     res.json({ data: updated });
   },

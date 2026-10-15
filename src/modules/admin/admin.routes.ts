@@ -7,6 +7,7 @@ import { validate } from '../../middleware/validate';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 import { audit } from '../../lib/audit';
+import { notifyOrderCancelled, notifyOrderConfirmed, notifyOrderShipped } from '../email/order.emails';
 
 // All admin routes require an authenticated user with the ADMIN role
 // (enforced below with requireRole) and mutations are audit-logged.
@@ -288,6 +289,12 @@ adminRouter.post(
       return o;
     });
     await audit(req.user!.sub, 'ORDER_STATUS_CHANGED', 'Order', order.id, { from: order.status, to }, req.ip);
+    // Best-effort customer notifications AFTER the transaction committed.
+    // Idempotent via event markers; CONFIRMED covers the COD flow (the
+    // Razorpay path confirms via verified webhook in order.service).
+    if (to === 'CONFIRMED') notifyOrderConfirmed(updated.orderNumber);
+    if (to === 'SHIPPED') notifyOrderShipped(updated.orderNumber);
+    if (to === 'CANCELLED') notifyOrderCancelled(updated.orderNumber);
     res.json({ data: { orderNumber: updated.orderNumber, status: updated.status } });
   },
 );
