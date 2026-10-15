@@ -506,3 +506,23 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([createdAt])
 }
+
+// ---------------------------------------------------------------- inbound email
+
+// Emails received through Resend inbound (webhook email.received events).
+// Stores metadata + a truncated body only - never attachment payloads.
+model InboundEmail {
+  id          String   @id @default(cuid())
+  emailId     String   @unique // Resend's email_id (idempotency key for replays)
+  from        String
+  to          String
+  cc          String?
+  subject     String
+  bodyText    String?
+  bodyHtml    String?
+  attachments Json?    // filename + content_type metadata ONLY
+  status      String   @default("RECEIVED") // RECEIVED | FETCHED | FETCH_FAILED
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+}
