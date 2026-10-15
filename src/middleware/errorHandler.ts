@@ -24,6 +24,16 @@ export const errorHandler = (err: unknown, req: Request, res: Response, _next: N
     });
     return;
   }
+  // Body-parser errors (e.g. malformed JSON) carry a numeric status of 400;
+  // honour it instead of masking the failure as a 500. Details are never
+  // exposed to the client.
+  const parseStatus = (err as { status?: unknown })?.status;
+  if (parseStatus === 400) {
+    res.status(400).json({
+      error: { code: 'BAD_REQUEST_BODY', message: 'Malformed request body.', details: null },
+    });
+    return;
+  }
   // Unknown error: log details server-side, return a generic message.
   logger.error(
     { err: err instanceof Error ? { message: err.message, stack: err.stack } : err, path: req.path },

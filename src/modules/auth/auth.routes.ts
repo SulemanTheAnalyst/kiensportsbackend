@@ -5,6 +5,8 @@ import { env, isProd } from '../../config/env';
 import { validate } from '../../middleware/validate';
 import { apiLimiter } from '../../middleware/errorHandler';
 import * as authService from './auth.service';
+import { sendEmailBackground } from '../email/email.service';
+import { passwordResetEmail } from '../email/email.templates';
 
 export const authRouter = Router();
 
@@ -92,8 +94,19 @@ authRouter.post(
   validate({ body: z.object({ email: z.string().email().max(254) }) }),
   async (req, res) => {
     const token = await authService.createPasswordResetToken(req.body.email);
-    // Email delivery is a later phase. In non-production we surface the token
-    // so the flow is testable; production must never include it.
+    // Email delivery via Resend (best-effort, never blocks the response).
+    // In non-production we ALSO surface the token so the flow is testable
+    // without email; production must never include it.
+    if (token) {
+      void sendEmailBackground({
+        to: req.body.email,
+        ...passwordResetEmail({
+          email: req.body.email,
+          resetUrl: env.FRONTEND_URL + '/account/reset?token=' + encodeURIComponent(token),
+          ttlMinutes: 60,
+        }),
+      });
+    }
     res.json({
       data: {
         ok: true,

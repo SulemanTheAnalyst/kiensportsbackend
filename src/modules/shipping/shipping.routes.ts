@@ -4,6 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { notFound } from '../../lib/errors';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireRole } from '../../middleware/auth';
+import { notifyOrderShipped } from '../email/order.emails';
 
 // Shipping is stored as data; carrier integration is a future provider
 // implementation (Shiprocket/Delhivery/etc.) and plugs into Shipment records.
@@ -74,6 +75,12 @@ adminShippingRouter.patch(
       }
       return s;
     });
+    // Customer shipping notification (includes carrier + tracking when set).
+    // Idempotent via event markers even if both this route and the admin
+    // order transition are used.
+    if (status === 'IN_TRANSIT' || status === 'OUT_FOR_DELIVERY') {
+      notifyOrderShipped(shipment.order.orderNumber);
+    }
     res.json({ data: updated });
   },
 );

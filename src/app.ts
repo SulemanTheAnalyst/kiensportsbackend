@@ -17,6 +17,8 @@ import { contactRouter, adminContactRouter } from './modules/contact/contact.rou
 import { adminRouter } from './modules/admin/admin.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
 import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
+import { resendInboundRouter } from './modules/email/inbound.routes';
+import { emailStatus } from './modules/email/email.config';
 
 export const createApp = (): Express => {
   const app = express();
@@ -52,7 +54,9 @@ export const createApp = (): Express => {
   const api = express.Router();
   api.use(apiLimiter(60_000, 300)); // global baseline
 
-  api.get('/health', (_req, res) => res.json({ data: { status: 'ok' } }));
+  api.get('/health', (_req, res) =>
+    res.json({ data: { status: 'ok', email: { sendingConfigured: emailStatus().sendingConfigured } } }),
+  );
 
   // Public + customer
   api.use('/auth', authRouter);
@@ -68,6 +72,9 @@ export const createApp = (): Express => {
 
   // Payments (webhook mounts under /payments too)
   api.use('/payments', paymentWebhookRouter);
+
+  // Resend inbound email webhook (public: verified via Svix signature)
+  api.use('/webhooks/resend', resendInboundRouter);
 
   // Admin - all routes below require ADMIN role
   api.use(
