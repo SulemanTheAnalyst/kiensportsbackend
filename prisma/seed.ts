@@ -9,6 +9,13 @@ const prisma = new PrismaClient();
 // Seed only the REAL current KIEN catalog: 3 products, 12 categories,
 // the existing collections, and one admin user. No fake products.
 const seed = async () => {
+  // DEVELOPMENT DATABASE ONLY. This script inserts catalog + development
+  // inventory values; it must never run against production. docker-compose
+  // (local) sets NODE_ENV=development; a production runtime must never seed.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('Refusing to seed: NODE_ENV=production. Seed data is for development databases only.');
+  }
+
   // Roles
   for (const name of ['CUSTOMER', 'ADMIN'] as const) {
     await prisma.role.upsert({ where: { name }, update: {}, create: { name } });
@@ -207,6 +214,20 @@ const seed = async () => {
         },
       },
     });
+    // Record a movement per seeded variant so the admin movement history shows
+    // the true origin of the initial quantities (the seed), matching the
+    // audited POST /admin/products behaviour.
+    for (const v of p.variants) {
+      const variant = await prisma.productVariant.findUniqueOrThrow({ where: { sku: v.sku } });
+      await prisma.inventoryMovement.create({
+        data: {
+          variantId: variant.id,
+          deltaQty: v.qty,
+          type: 'RESTOCK',
+          reference: 'seed:initial-stock',
+        },
+      });
+    }
     console.log('Seeded product: ' + p.slug);
   }
 
