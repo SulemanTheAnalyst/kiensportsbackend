@@ -3,7 +3,10 @@ import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { validate } from '../../middleware/validate';
 import { apiLimiter } from '../../middleware/errorHandler';
+import { env } from '../../config/env';
 import { requireAuth, requireRole } from '../../middleware/auth';
+import { sendEmailBackground } from '../email/email.service';
+import { contactCustomerConfirmation, contactSupportNotification } from '../email/email.templates';
 
 // Matches the frontend ContactPage form exactly:
 // name, email, subject (enum), message.
@@ -31,6 +34,20 @@ contactRouter.post(
   }),
   async (req, res) => {
     const msg = await prisma.contactMessage.create({ data: req.body });
+    // Email notifications are best-effort and never block or fail the
+    // request: the message is already safely persisted above.
+    // - support notification: Reply-To = the customer's validated address
+    // - customer confirmation: sent from the authorized KIEN sender only
+    if (env.SUPPORT_EMAIL) {
+      void sendEmailBackground({
+        to: env.SUPPORT_EMAIL,
+        replyTo: msg.email,
+        ...contactSupportNotification({
+          id: msg.id, name: msg.name, email: msg.email, subject: msg.subject, message: msg.message,
+        }),
+      });
+    }
+    void sendEmailBackground({ to: msg.email, ...contactCustomerConfirmation({ name: msg.name, subject: msg.subject }) });
     res.status(201).json({ data: { id: msg.id, message: 'Thanks for reaching out. We will get back to you soon.' } });
   },
 );
