@@ -383,16 +383,35 @@ adminReportsRouter.get('/inventory', async (req, res) => {
 adminReportsRouter.get('/inventory/movements', async (req, res) => {
   const { page, limit, skip } = pageParams(req, 60, 50);
   const sku = typeof req.query.sku === 'string' ? req.query.sku.trim() : undefined;
-  const where = sku ? { variant: { sku } } : {};
+  // InventoryMovement relates to Inventory (by variantId), not directly to
+  // ProductVariant: traverse inventory -> variant.
+  const where: Prisma.InventoryMovementWhereInput = sku ? { inventory: { variant: { sku } } } : {};
   const [items, total] = await Promise.all([
     prisma.inventoryMovement.findMany({
       where,
-      include: { variant: { select: { sku: true, product: { select: { name: true } } } } },
+      include: { inventory: { select: { variant: { select: { sku: true, product: { select: { name: true } } } } } } },
       orderBy: { createdAt: 'desc' },
       skip,
       take: limit,
     }),
     prisma.inventoryMovement.count({ where }),
   ]);
-  res.json({ data: items, page, limit, total });
+  // Flatten to the documented response shape (variant at the top level) so
+  // the admin frontend contract is unchanged.
+  res.json({
+    data: items.map((m) => ({
+      id: m.id,
+      variantId: m.variantId,
+      sku: m.inventory?.variant.sku ?? null,
+      product: m.inventory?.variant.product.name ?? null,
+      deltaQty: m.deltaQty,
+      type: m.type,
+      reference: m.reference,
+      actorId: m.actorId,
+      createdAt: m.createdAt,
+    })),
+    page,
+    limit,
+    total,
+  });
 });
