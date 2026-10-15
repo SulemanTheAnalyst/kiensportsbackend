@@ -65,7 +65,8 @@ run('resend inbound webhook', () => {
     const first = await request(app)
       .post(inboundUrl)
       .set(headers)
-      .set('svix-signature', sign('msg-dup', now(), body))
+      .set('svix-signature', sign('msg-dup', Number(headers['svix-timestamp']), body))
+      .set('Content-Type', 'application/json')
       .send(body);
     expect(first.status).toBe(200);
     const second = await request(app)
@@ -73,6 +74,7 @@ run('resend inbound webhook', () => {
       .set('svix-id', 'msg-dup-2')
       .set('svix-timestamp', String(now()))
       .set('svix-signature', sign('msg-dup-2', now(), body))
+      .set('Content-Type', 'application/json')
       .send(body);
     expect(second.status).toBe(200);
     expect(second.body.data.duplicate).toBe(true);
@@ -85,6 +87,7 @@ run('resend inbound webhook', () => {
       .set('svix-id', 'msg-bad')
       .set('svix-timestamp', String(now()))
       .set('svix-signature', 'v1,tamperedsignature==')
+      .set('Content-Type', 'application/json')
       .send(body);
     expect(res.status).toBe(400);
     expect(res.body.error).toBeTruthy();
@@ -92,7 +95,7 @@ run('resend inbound webhook', () => {
 
   it('rejects a missing signature header (400)', async () => {
     const body = emailEvent('evt-reject-2');
-    const res = await request(app).post(inboundUrl).set('svix-id', 'msg-no-sig').set('svix-timestamp', String(now())).send(body);
+    const res = await request(app).post(inboundUrl).set('svix-id', 'msg-no-sig').set('svix-timestamp', String(now())).set('Content-Type', 'application/json').send(body);
     expect(res.status).toBe(400);
   });
 
@@ -103,6 +106,7 @@ run('resend inbound webhook', () => {
       .set('svix-id', 'msg-malformed')
       .set('svix-timestamp', String(now()))
       .set('svix-signature', sign('msg-malformed', now(), body))
+      .set('Content-Type', 'application/json')
       .send(body);
     expect(res.status).toBe(400);
   });
@@ -114,6 +118,7 @@ run('resend inbound webhook', () => {
       .set('svix-id', 'msg-other')
       .set('svix-timestamp', String(now()))
       .set('svix-signature', sign('msg-other', now(), body))
+      .set('Content-Type', 'application/json')
       .send(body);
     expect(res.status).toBe(200);
     expect(res.body.data.ignored).toBe(true);

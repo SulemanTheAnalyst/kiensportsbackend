@@ -17,10 +17,18 @@ vi.mock('../../src/lib/prisma', () => ({
   prisma: { orderStatusEvent: { findFirst: vi.fn(), create: vi.fn() } },
 }));
 
+// The mocked prisma instance is shared across tests (vi.mock factory is
+// cached), so its call history must be cleared per test like sendMock.
+const prisma = { orderStatusEvent: { findFirst: vi.fn(), create: vi.fn() } } as {
+  orderStatusEvent: { findFirst: ReturnType<typeof vi.fn>; create: ReturnType<typeof vi.fn> };
+};
+
 describe('email service', () => {
   beforeEach(() => {
     sendMock.mockReset();
     vi.resetModules();
+    prisma.orderStatusEvent.findFirst.mockReset();
+    prisma.orderStatusEvent.create.mockReset();
   });
 
   it('reports not-configured instead of throwing when RESEND_API_KEY is unset', async () => {
