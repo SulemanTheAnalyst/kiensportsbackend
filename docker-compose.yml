@@ -52,7 +52,7 @@ services:
     ports:
       - "3000:3000"
 
-    command: sh -c "npx prisma migrate deploy && npx tsx prisma/seed.ts && node dist/src/server.js"
+    command: sh -c "npx prisma migrate deploy && node dist/src/server.js"
 
 volumes:
   pgdata:
