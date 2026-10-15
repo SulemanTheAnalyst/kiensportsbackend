@@ -5,7 +5,6 @@ import { ApiError, badRequest } from '../../lib/errors';
 import { logger } from '../../lib/logger';
 import { prisma } from '../../lib/prisma';
 import { verifySvixSignature } from './svix';
-import { Resend } from 'resend';
 import { sendEmailBackground } from './email.service';
 import { inboundEmailNotification } from './email.templates';
 
@@ -52,13 +51,18 @@ const MAX_BODY_EXCERPT_CHARS = 20_000;
 const fetchBody = async (emailId: string): Promise<{ text: string | null; html: string | null }> => {
   if (!env.RESEND_API_KEY) return { text: null, html: null };
   try {
-    const resend = new Resend(env.RESEND_API_KEY);
-    const { data, error } = await resend.emails.receiving.get(emailId);
-    if (error || !data) {
-      logger.warn({ emailId }, 'Receiving API returned no content for inbound email');
+    // Raw REST call to the documented Received emails API. The inbound
+    // webhook carries metadata only, so the body must be fetched here.
+    // Response shape: { data: { html, text, headers, ... } }.
+    const res = await fetch(`https://api.resend.com/emails/${encodeURIComponent(emailId)}`, {
+      headers: { Authorization: `Bearer ${env.RESEND_API_KEY}` },
+    });
+    if (!res.ok) {
+      logger.warn({ emailId, status: res.status }, 'Receiving API returned no content for inbound email');
       return { text: null, html: null };
     }
-    const rec = data as unknown as { text?: string | null; html?: string | null };
+    const body = (await res.json()) as { data?: { text?: string | null; html?: string | null }; text?: string | null; html?: string | null };
+    const rec = body.data ?? body;
     return { text: rec.text ?? null, html: rec.html ?? null };
   } catch (err) {
     logger.error(

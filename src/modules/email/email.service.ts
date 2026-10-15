@@ -102,6 +102,7 @@ export const sendEmailBackground = (input: SendEmailInput): Promise<SendEmailRes
 
 export type OrderEmailKind =
   | 'ORDER_CONFIRMED'
+  | 'BUSINESS_ORDER_CONFIRMED'
   | 'ORDER_SHIPPED'
   | 'ORDER_CANCELLED'
   | 'ORDER_RETURNED'

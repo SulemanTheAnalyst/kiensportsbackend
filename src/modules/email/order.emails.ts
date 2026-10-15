@@ -75,10 +75,12 @@ export const notifyOrderConfirmed = (orderNumber: string) => {
     await sendOrderEmailOnce('ORDER_CONFIRMED', order.id, undefined, () => {
       return withOrderInner(order!, orderConfirmationEmail);
     });
-    // Business notification (if configured) with its own marker.
+    // Business notification (if configured) with its own marker. Sent to
+    // the business address, never to the customer.
     if (env.BUSINESS_NOTIFICATION_EMAIL) {
       await sendOrderEmailOnce('BUSINESS_ORDER_CONFIRMED', order.id, undefined, () => {
-        return withOrderInner(order!, businessNewOrderNotification);
+        const data = toEmailData(order!);
+        return sendEmail({ to: env.BUSINESS_NOTIFICATION_EMAIL, ...businessNewOrderNotification(data) });
       });
     }
   })().catch(() => undefined);

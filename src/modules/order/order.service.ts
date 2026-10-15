@@ -228,7 +228,7 @@ export const confirmOrderPayment = async (providerPaymentId: string) => {
   if (payment.status === 'CAPTURED' && payment.webhookVerifiedAt) {
     return payment.order; // idempotent replay
   }
-  return prisma.$transaction(async (tx) => {
+  const confirmed = await prisma.$transaction(async (tx) => {
     await tx.payment.update({
       where: { id: payment.id },
       data: { status: 'CAPTURED', webhookVerifiedAt: new Date(), providerPaymentId },
@@ -263,7 +263,8 @@ export const confirmOrderPayment = async (providerPaymentId: string) => {
   // Transaction committed and payment VERIFIED: safe to notify the customer
   // and the business. Best-effort, idempotent (replays of an already-captured
   // payment return above and never reach this line). Never inside the tx.
-  notifyOrderConfirmed(order.orderNumber);
+  notifyOrderConfirmed(confirmed.orderNumber);
+  return confirmed;
 };
 
 // Release reservations if a payment is definitively failed/expired.
