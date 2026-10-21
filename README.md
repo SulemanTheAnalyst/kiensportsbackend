@@ -96,6 +96,20 @@ Requirements for production: `NODE_ENV=production`, a real `PAYMENT_PROVIDER` (t
 refuses to boot in production), `CORS_ORIGIN` set to the live KIEN domain, HTTPS
 termination in front, and secrets from the platform's secret store.
 
+**Important - reference data:** `npx prisma migrate deploy` only applies migrations; it does
+**not** seed the database. The admin product form and the storefront depend on the reference
+data created by `prisma/seed.ts` (roles, the 12 categories, the collections, and the initial
+catalog products). Without it the admin New Product form has no categories to pick and
+product creation fails with "Unknown categorySlug". Run once after the first production deploy:
+
+```bash
+npm run db:seed
+```
+
+The seed is idempotent and non-destructive: roles, categories and collections are upserted,
+existing products are skipped, and the admin user is only created when `ADMIN_EMAIL` /
+`ADMIN_PASSWORD` are set. Never delete or truncate production tables to "re-seed".
+
 ## License
 
 This project is proprietary software owned by KIEN Sports Private Limited.
