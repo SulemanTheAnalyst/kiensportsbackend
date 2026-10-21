@@ -14,6 +14,9 @@ export interface WebhookEvent {
   providerPaymentId: string | null;
   status: 'CAPTURED' | 'FAILED';
   amountPaise: number;
+  // ISO currency code from the provider, when the payload carries one.
+  // We only ever charge INR; a mismatched currency must never confirm an order.
+  currency?: string | null;
   raw: unknown;
 }
 
