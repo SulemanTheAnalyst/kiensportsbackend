@@ -50,7 +50,7 @@ export class RazorpayGateway implements PaymentGateway {
 
     let parsed: {
       event?: string;
-      payload?: { payment?: { entity?: { id: string; order_id: string; status: string; amount: number } } };
+      payload?: { payment?: { entity?: { id: string; order_id: string; status: string; amount: number; currency?: string } } };
     };
     try {
       parsed = JSON.parse(rawBody.toString('utf8'));
@@ -65,6 +65,7 @@ export class RazorpayGateway implements PaymentGateway {
       providerPaymentId: entity.id,
       status: captured ? 'CAPTURED' : 'FAILED',
       amountPaise: entity.amount,
+      currency: entity.currency ?? null,
       raw: { event: parsed.event },
     };
   }

@@ -6,7 +6,7 @@ import { prisma } from '../../lib/prisma';
 import { MockGateway } from './mock.gateway';
 import { RazorpayGateway } from './razorpay.gateway';
 import type { PayableOrder, PaymentGateway, PaymentSession } from './gateway.types';
-import { confirmOrderPayment } from '../order/order.service';
+import { confirmOrderPayment, failOrderPayment } from '../order/order.service';
 
 // The gateway is a singleton chosen at boot via PAYMENT_PROVIDER.
 // The mock provider is refused in production so we never pretend payments work.
@@ -55,20 +55,77 @@ export const paymentService = {
   },
 
   // Handle a verified provider webhook. Returns the updated order.
+  //
+  // Matching strategy (Razorpay sends the payment id only in the webhook;
+  // our Payment row only stores the provider ORDER id at session creation):
+  //  1. Direct lookup by providerPaymentId - covers replays and any path
+  //     where the payment id was already persisted (e.g. the mock simulator).
+  //  2. Otherwise resolve via the providerOrderId we persisted when the
+  //     session was created, then ATOMICALLY CLAIM the providerPaymentId on
+  //     that row. The conditional update (providerPaymentId still null,
+  //     status still CREATED) plus the unique constraint on
+  //     (provider, providerOrderId, providerPaymentId) make the claim safe
+  //     against concurrent duplicate webhooks and prevent one provider
+  //     payment from being attached to an unrelated order.
   async handleVerifiedWebhook(event: {
     providerOrderId: string | null;
     providerPaymentId: string | null;
     status: 'CAPTURED' | 'FAILED';
     amountPaise: number;
+    currency?: string | null;
   }) {
     if (!event.providerPaymentId) throw badRequest('Webhook payload missing payment id');
-    const payment = await prisma.payment.findFirst({
+
+    let payment = await prisma.payment.findFirst({
       where: { providerPaymentId: event.providerPaymentId },
     });
+
     if (!payment) {
-      logger.warn({ providerPaymentId: event.providerPaymentId }, 'Webhook for unknown payment');
-      throw notFound('Unknown payment');
+      if (!event.providerOrderId) {
+        logger.warn({ providerPaymentId: event.providerPaymentId }, 'Webhook for unknown payment');
+        throw notFound('Unknown payment');
+      }
+      const session = await prisma.payment.findFirst({
+        where: { providerOrderId: event.providerOrderId, status: 'CREATED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!session) {
+        logger.warn(
+          { providerOrderId: event.providerOrderId, providerPaymentId: event.providerPaymentId },
+          'Webhook for unknown payment',
+        );
+        throw notFound('Unknown payment');
+      }
+      // Atomic claim: only one concurrent webhook can win. If we lose, the
+      // winner already stored this id - fall through to the re-fetch below.
+      const claim = await prisma.payment.updateMany({
+        where: { id: session.id, providerPaymentId: null, status: 'CREATED' },
+        data: { providerPaymentId: event.providerPaymentId },
+      });
+      if (claim.count === 0) {
+        payment = await prisma.payment.findFirst({
+          where: { providerPaymentId: event.providerPaymentId },
+        });
+        if (!payment) {
+          logger.warn({ providerPaymentId: event.providerPaymentId }, 'Webhook for unknown payment');
+          throw notFound('Unknown payment');
+        }
+      } else {
+        payment = session;
+      }
     }
+
+    // The provider payment must belong to the provider order it references.
+    // A valid payment id paired with a foreign order id is rejected outright:
+    // one provider payment can never be attached to an unrelated order.
+    if (payment.providerOrderId && event.providerOrderId && payment.providerOrderId !== event.providerOrderId) {
+      logger.error(
+        { paymentId: payment.id, expected: payment.providerOrderId, got: event.providerOrderId },
+        'Webhook provider order mismatch - ignoring',
+      );
+      throw badRequest('Webhook does not match the payment order');
+    }
+
     // Amount check: the webhook amount must match what we charged.
     if (event.status === 'CAPTURED' && event.amountPaise !== payment.amountPaise) {
       logger.error(
@@ -77,9 +134,25 @@ export const paymentService = {
       );
       throw badRequest('Payment amount mismatch');
     }
+
+    // Currency check: we only ever charge INR.
+    if (event.status === 'CAPTURED' && event.currency && event.currency !== 'INR') {
+      logger.error(
+        { expected: 'INR', got: event.currency },
+        'Webhook currency mismatch - ignoring',
+      );
+      throw badRequest('Payment currency mismatch');
+    }
+
     if (event.status === 'CAPTURED') {
       return confirmOrderPayment(event.providerPaymentId);
     }
+
+    // Verified failure: mark the payment attempt failed and release the
+    // inventory reservation so stock is not held forever by abandoned or
+    // failed checkouts. Both updates are idempotent on replay.
+    await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } });
+    await failOrderPayment(payment.orderId);
     return payment.orderId;
   },
 
