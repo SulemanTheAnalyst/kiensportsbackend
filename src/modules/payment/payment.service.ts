@@ -35,16 +35,26 @@ export const paymentService = {
   ): Promise<PaymentSession> {
     const payment = order.payments.find((p) => p.status === 'CREATED') ?? order.payments[order.payments.length - 1];
     if (!payment) throw notFound('Payment record missing for order ' + order.orderNumber);
-    if (!this.supports(payment.method)) {
-      throw badRequest('Payment method not supported by the configured provider');
-    }
+    // COD is an operational flow, never an online-gateway flow, so it must be
+    // handled BEFORE the gateway supports() check. RazorpayGateway.supports()
+    // returns false for COD, and the previous ordering made every production
+    // COD checkout throw 'Payment method not supported' AFTER the order
+    // transaction had already committed - the root cause of the transient
+    // 'Invalid payment method' error on COD checkout.
     if (payment.method === PaymentMethod.COD) {
       // COD is confirmed operationally, not by a gateway; return a marker payload.
+      await prisma.payment.update({
+        where: { id: payment.id },
+        data: { provider: 'cod', providerOrderId: 'cod_' + order.orderNumber, status: 'COD_PENDING' },
+      });
       return {
         provider: 'cod',
         providerOrderId: 'cod_' + order.orderNumber,
         checkoutPayload: { mode: 'cod', instructions: 'Cash on delivery - pay when the order arrives.' },
       };
+    }
+    if (!this.supports(payment.method)) {
+      throw badRequest('Payment method not supported by the configured provider');
     }
     const session = await gateway.createOrder(order, payment);
     await prisma.payment.update({
@@ -85,12 +95,6 @@ export const paymentService = {
         logger.warn({ providerPaymentId: event.providerPaymentId }, 'Webhook for unknown payment');
         throw notFound('Unknown payment');
       }
-      // Match on the provider order id regardless of the current attempt
-      // status: a late webhook may legitimately arrive after the attempt
-      // was expired or failed by our own sweep. The atomic claim below plus
-      // the order-state re-checks in confirmOrderPayment/failOrderPayment
-      // keep this safe - an expired attempt that receives a verified capture
-      // is recorded but never resurrected into a fulfilled order.
       const session = await prisma.payment.findFirst({
         where: { providerOrderId: event.providerOrderId },
         orderBy: { createdAt: 'desc' },
@@ -162,7 +166,7 @@ export const paymentService = {
     // inventory reservation so stock is not held forever by abandoned or
     // failed checkouts. Both updates are idempotent on replay.
     await prisma.payment.update({ where: { id: payment.id }, data: { status: 'FAILED' } });
-    await failOrderPayment(payment.orderId);
+    await failOrderPayment(payment.orderId, 'Provider reported the payment as failed');
     return payment.orderId;
   },
 
@@ -170,3 +174,4 @@ export const paymentService = {
     return gateway.refund(providerPaymentId, amountPaise);
   },
 };
+
