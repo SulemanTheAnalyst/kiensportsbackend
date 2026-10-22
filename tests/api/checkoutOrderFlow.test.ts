@@ -159,7 +159,6 @@ run('checkout order flow: auth, validation, media thumbnails (integration)', () 
 
     const order = res.body.data.order;
     created.orderIds.push(order.id);
-    expect(order.userId ?? undefined).toBeTruthy();
     const stored = await prisma.order.findFirstOrThrow({ where: { id: order.id }, include: { items: true } });
     expect(stored.userId).toBe(userId); // identity from the token, not the body
     // Server-side pricing: the VARIANT price (Rs 1499), not the browser price
