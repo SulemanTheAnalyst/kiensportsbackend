@@ -41,7 +41,15 @@ orderRouter.post(
     }),
   }),
   async (req, res) => {
-    const { order, payment } = await createOrder(req, req.body);
+    // Map the validated body onto the service contract explicitly. (The body
+    // key is `paymentMethod`; the service expects `method`. Passing the raw
+    // body previously left `method` undefined and made every valid checkout
+    // fail with a 500 at payment-record creation.)
+    const { order, payment } = await createOrder(req, {
+      email: req.body.email,
+      address: req.body.address,
+      method: req.body.paymentMethod,
+    });
     res.status(201).json({
       data: {
         order: serializeOrder(order),
