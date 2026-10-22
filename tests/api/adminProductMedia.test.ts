@@ -50,7 +50,7 @@ run('admin product media (images + videos)', () => {
         if (fail) throw new Error('boom');
         uploads.push({ mediaType, bytes: buffer.length });
         const n = uploads.length;
-        const resourceType = mediaType === 'VIDEO' ? 'video' : 'image';
+        const resourceType: 'image' | 'video' = mediaType === 'VIDEO' ? 'video' : 'image';
         return {
           url: `https://res.cloudinary.com/test/${resourceType}/upload/v1/kiensports/products/fake-${n}`,
           publicId: `kiensports/products/fake-${n}`,

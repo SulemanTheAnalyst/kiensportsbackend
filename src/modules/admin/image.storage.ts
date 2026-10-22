@@ -28,12 +28,10 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB per video (Cloudinary free-plan cap)
 
 export type MediaType = 'IMAGE' | 'VIDEO';
-export type DetectedKind = 'jpeg' | 'png' | 'webp' | 'mp4' | 'webm';
-
-export interface DetectedMedia {
-  kind: DetectedKind;
-  mediaType: MediaType;
-}
+/** Discriminated so a mediaType check narrows the detected kind. */
+export type DetectedMedia =
+  | { kind: 'jpeg' | 'png' | 'webp'; mediaType: 'IMAGE' }
+  | { kind: 'mp4' | 'webm'; mediaType: 'VIDEO' };
 
 export interface StoredMedia {
   url: string;
