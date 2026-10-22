@@ -9,6 +9,9 @@ import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 import { audit } from '../../lib/audit';
 import { notifyOrderCancelled, notifyOrderConfirmed, notifyOrderShipped } from '../email/order.emails';
 import { destroyImage } from './image.storage';
+import { env } from '../../config/env';
+import { expireStalePendingPayments } from '../order/order.service';
+import { recordBusinessEvent, orderNotificationPayload } from '../notifications/notifications';
 
 // All admin routes require an authenticated user with the ADMIN role
 // (enforced below with requireRole) and mutations are audit-logged.
@@ -419,6 +422,10 @@ adminRouter.get('/inventory/low-stock', async (_req, res) => {
 // ---------------- Orders ----------------
 
 adminRouter.get('/orders', async (req, res) => {
+  // Lazy sweep of stale prepaid attempts (releases inventory, cancels the
+  // order, queues one expiration notification each). Fire-and-forget so the
+  // listing never blocks on it.
+  void expireStalePendingPayments().catch(() => undefined);
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 25));
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
@@ -448,14 +455,38 @@ adminRouter.post(
   async (req, res) => {
     const order = await prisma.order.findUnique({
       where: { orderNumber: String(req.params.orderNumber) },
-      include: { items: true, statusEvents: true },
+      include: { items: true, statusEvents: true, payments: true },
     });
     if (!order) throw notFound('Order not found');
     const to = req.body.toStatus;
     if (order.status === to) throw badRequest('Order already in status ' + to);
-    // Guard: only CONFIRMED orders can move to PROCESSING+; cancellation rules.
-    if (order.paymentStatus !== 'PAID' && to !== 'CANCELLED' && to !== 'CONFIRMED') {
-      throw badRequest('Order must be paid before fulfilment transitions');
+
+    // Terminal states are never fulfilment-eligible again.
+    if (['CANCELLED', 'DELIVERED', 'RETURNED'].includes(order.status)) {
+      throw badRequest('Order is ' + order.status + ' and can no longer be transitioned. Cancelled or completed orders are not eligible for fulfilment.');
+    }
+    const isCod = order.payments.some((p) => p.method === 'COD');
+    // An unpaid prepaid attempt is not a business order yet: only CANCELLED is
+    // available. Payment confirmation comes exclusively from the verified
+    // provider webhook - never from the admin panel.
+    if (order.status === 'PENDING_PAYMENT' && to !== 'CANCELLED') {
+      throw badRequest('This prepaid order is still awaiting payment and is not a confirmed order yet. Only CANCELLED is allowed until the payment is verified by the payment gateway webhook.');
+    }
+    // Fulfilment guard with distinct COD and prepaid policies:
+    // - prepaid must be PAID (verified payment) before fulfilment;
+    // - COD may proceed while COD_PENDING when the configured COD policy
+    //   allows dispatch before collection (COD_ALLOW_DISPATCH_UNPAID=true).
+    //   A COD order is never marked PAID before the cash is actually
+    //   collected - that happens only via the collect-cod action.
+    const codDispatchAllowed = env.COD_ALLOW_DISPATCH_UNPAID === 'true';
+    const fulfilmentAllowed =
+      order.paymentStatus === 'PAID' ||
+      (isCod && order.paymentStatus === 'COD_PENDING' && codDispatchAllowed);
+    if (!fulfilmentAllowed && to !== 'CANCELLED') {
+      if (isCod && !codDispatchAllowed) {
+        throw badRequest('The configured COD policy requires cash collection before dispatch (COD_ALLOW_DISPATCH_UNPAID=false). Record the COD payment via the collect-payment action first.');
+      }
+      throw badRequest('A prepaid order cannot be fulfilled before its payment is verified. This order is ' + order.paymentStatus + ' (' + order.status + '); only CANCELLED is available right now.');
     }
     const updated = await prisma.$transaction(async (tx) => {
       const o = await tx.order.update({ where: { id: order.id }, data: { status: to } });
@@ -482,14 +513,89 @@ adminRouter.post(
     });
     await audit(req.user!.sub, 'ORDER_STATUS_CHANGED', 'Order', order.id, { from: order.status, to }, req.ip);
     // Best-effort customer notifications AFTER the transaction committed.
-    // Idempotent via event markers; CONFIRMED covers the COD flow (the
-    // Razorpay path confirms via verified webhook in order.service).
-    if (to === 'CONFIRMED') notifyOrderConfirmed(updated.orderNumber);
+    // Idempotent via event markers. (No CONFIRMED notification here: COD
+    // orders are confirmed at creation in order.service and prepaid orders
+    // are confirmed exclusively by the verified webhook.)
     if (to === 'SHIPPED') notifyOrderShipped(updated.orderNumber);
     if (to === 'CANCELLED') notifyOrderCancelled(updated.orderNumber);
     res.json({ data: { orderNumber: updated.orderNumber, status: updated.status } });
   },
 );
+
+// COD payment collection - the ONLY way a COD order becomes PAID. Converts
+// the inventory reservation into a sale at collection time and records the
+// reconciliation for the audit trail. Idempotently refuses double collection.
+adminRouter.post(
+  '/orders/:orderNumber/collect-cod',
+  validate({
+    params: z.object({ orderNumber: z.string().min(6).max(40) }),
+    body: z.object({ note: z.string().max(500).optional() }).optional(),
+  }),
+  async (req, res) => {
+    const order = await prisma.order.findUnique({
+      where: { orderNumber: String(req.params.orderNumber) },
+      include: { items: true, payments: true },
+    });
+    if (!order) throw notFound('Order not found');
+    if (!order.payments.some((p) => p.method === 'COD')) {
+      throw badRequest('Not a COD order - use the regular payment/refund workflows.');
+    }
+    if (order.status === 'CANCELLED') throw badRequest('A cancelled order cannot record a COD collection.');
+    if (order.paymentStatus === 'PAID') throw badRequest('COD payment has already been recorded as collected.');
+
+    const updated = await prisma.$transaction(async (tx) => {
+      // Lock so a concurrent webhook/cancellation cannot interleave.
+      await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${order.id} FOR UPDATE`;
+      const fresh = await tx.order.findUniqueOrThrow({
+        where: { id: order.id },
+        include: { items: true, payments: true },
+      });
+      if (fresh.paymentStatus === 'PAID') throw badRequest('COD payment has already been recorded as collected.');
+      const o = await tx.order.update({ where: { id: order.id }, data: { paymentStatus: 'PAID' } });
+      await tx.payment.updateMany({
+        where: { orderId: order.id, method: 'COD', status: 'COD_PENDING' },
+        data: { status: 'COD_COLLECTED' },
+      });
+      await tx.orderStatusEvent.create({
+        data: {
+          orderId: order.id,
+          fromStatus: fresh.status,
+          toStatus: fresh.status,
+          note: 'COD payment collected' + (req.body?.note ? ' - ' + req.body.note : ''),
+          actorId: req.user!.sub,
+        },
+      });
+      // The reservation becomes a sale at collection time.
+      for (const item of fresh.items) {
+        if (!item.variantId) continue;
+        await tx.inventory.update({
+          where: { variantId: item.variantId },
+          data: { reservedQty: { decrement: item.quantity }, soldQty: { increment: item.quantity } },
+        });
+        await tx.inventoryMovement.create({
+          data: { variantId: item.variantId, deltaQty: item.quantity, type: 'SALE', reference: o.orderNumber, actorId: req.user!.sub },
+        });
+      }
+      return o;
+    });
+    await audit(req.user!.sub, 'COD_PAYMENT_COLLECTED', 'Order', order.id, { note: req.body?.note }, req.ip);
+    await recordBusinessEvent(
+      'COD_COLLECTED',
+      'COD_COLLECTED:' + order.id,
+      orderNotificationPayload({ ...order, paymentStatus: 'PAID' }, { reason: 'COD payment collected and reconciled' }),
+    );
+    res.json({ data: { orderNumber: updated.orderNumber, paymentStatus: 'PAID' } });
+  },
+);
+
+// Ops endpoint: expire stale prepaid checkout attempts (TTL from
+// PENDING_PAYMENT_TTL_MINUTES). Releases their inventory reservation and
+// queues exactly one expiration notification per attempt. Also intended for
+// a scheduled Render cron job.
+adminRouter.post('/orders/expire-pending', async (_req, res) => {
+  const expired = await expireStalePendingPayments();
+  res.json({ data: { expired } });
+});
 
 // ---------------- Audit trail viewer ----------------
 
