@@ -8,7 +8,7 @@ import { requireAuth, requireRole } from '../../middleware/auth';
 import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 import { audit } from '../../lib/audit';
 import { notifyOrderCancelled, notifyOrderConfirmed, notifyOrderShipped } from '../email/order.emails';
-import { destroyMedia, type StoredAssetRef } from './media.storage';
+import { destroyImage } from './image.storage';
 
 // All admin routes require an authenticated user with the ADMIN role
 // (enforced below with requireRole) and mutations are audit-logged.
@@ -26,6 +26,15 @@ const variantSchema = z.object({
   inventoryQty: z.number().int().min(0).default(0),
 });
 
+const imageEntrySchema = z.object({
+  url: z.string().url().max(500),
+  alt: z.string().max(200).optional(),
+  colorName: z.string().max(60).optional(),
+  mediaType: z.enum(['IMAGE', 'VIDEO']).optional(), // default IMAGE (legacy rows)
+  publicId: z.string().max(300).optional(),
+  resourceType: z.string().max(30).optional(),
+  format: z.string().max(30).optional(),
+});
 const productBodySchema = z.object({
   slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
   name: z.string().min(2).max(200),
@@ -46,29 +55,19 @@ const productBodySchema = z.object({
   tags: z.array(z.string().max(40)).default([]),
   seoTitle: z.string().max(200).optional().nullable(),
   seoDescription: z.string().max(500).optional().nullable(),
-  images: z.array(z.object({ url: z.string().url().max(500), alt: z.string().max(200).optional(), colorName: z.string().max(60).optional(), mediaType: z.enum(['IMAGE', 'VIDEO']).optional(), publicId: z.string().max(300).optional(), format: z.string().max(20).optional(), width: z.number().int().positive().optional(), height: z.number().int().positive().optional(), durationSeconds: z.number().int().positive().optional() })).default([]),
+  images: z.array(imageEntrySchema).default([]),
   features: z.array(z.object({ title: z.string().max(120), description: z.string().max(1000), icon: z.string().max(60).optional() })).default([]),
   variants: z.array(variantSchema).min(1),
 });
 
-// Update schemas: image entries may carry an existing `id`.
+// Update schemas: images/features entries may carry an existing `id`.
 // Entries with an id are updated (and re-ordered by array position);
 // entries without an id are created; existing rows whose ids are absent
 // from the array are deleted. This keeps every PATCH atomic.
-// media fields (mediaType/publicId/format/dimensions/duration) persist
-// Cloudinary asset metadata; rows created before the media upgrade keep
-// their defaults (IMAGE, no publicId) and continue to work unchanged.
-const imageUpdateSchema = z.object({
-  id: z.string().min(10).max(40).optional(),
-  url: z.string().url().max(500),
+const imageUpdateSchema = imageEntrySchema.extend({
   alt: z.string().max(200).optional().nullable(),
   colorName: z.string().max(60).optional().nullable(),
-  mediaType: z.enum(['IMAGE', 'VIDEO']).optional(),
-  publicId: z.string().max(300).optional().nullable(),
-  format: z.string().max(20).optional().nullable(),
-  width: z.number().int().positive().optional().nullable(),
-  height: z.number().int().positive().optional().nullable(),
-  durationSeconds: z.number().int().positive().optional().nullable(),
+  id: z.string().min(10).max(40).optional(),
 });
 
 const featureUpdateSchema = z.object({
@@ -148,20 +147,7 @@ adminRouter.post(
           seoDescription: body.seoDescription ?? null,
           category: { connect: { id: category.id } },
           collection: body.collectionSlug ? { connect: { slug: body.collectionSlug } } : undefined,
-          images: {
-            create: body.images.map((i, idx) => ({
-              url: i.url,
-              alt: i.alt,
-              colorName: i.colorName,
-              mediaType: i.mediaType ?? 'IMAGE',
-              publicId: i.publicId ?? null,
-              format: i.format ?? null,
-              width: i.width ?? null,
-              height: i.height ?? null,
-              durationSeconds: i.durationSeconds ?? null,
-              sortOrder: idx,
-            })),
-          },
+          images: { create: body.images.map((i, idx) => ({ url: i.url, alt: i.alt, colorName: i.colorName, mediaType: i.mediaType ?? 'IMAGE', publicId: i.publicId ?? null, resourceType: i.resourceType ?? null, format: i.format ?? null, sortOrder: idx })) },
           features: { create: body.features.map((f, idx) => ({ ...f, sortOrder: idx })) },
           variants: {
             create: body.variants.map((v) => ({
@@ -253,13 +239,13 @@ adminRouter.patch(
     if (body.categorySlug !== undefined) data.category = { connect: { slug: body.categorySlug } };
     if (body.collectionSlug !== undefined) data.collection = body.collectionSlug ? { connect: { slug: body.collectionSlug } } : { disconnect: true };
 
-    const removedMedia: StoredAssetRef[] = [];
+    const removedImageRefs: { url: string; publicId: string | null; resourceType: string | null }[] = [];
     const updated = await prisma.$transaction(async (tx) => {
       if (body.images) {
         const keptIds = new Set(body.images.filter((i) => i.id).map((i) => i.id!));
         for (const img of existing.images) {
           if (!keptIds.has(img.id)) {
-            removedMedia.push({ url: img.url, publicId: img.publicId, mediaType: img.mediaType === 'VIDEO' ? 'VIDEO' : 'IMAGE' });
+            removedImageRefs.push({ url: img.url, publicId: img.publicId, resourceType: img.resourceType });
             await tx.productImage.delete({ where: { id: img.id } });
           }
         }
@@ -271,10 +257,8 @@ adminRouter.patch(
             colorName: img.colorName ?? null,
             mediaType: img.mediaType ?? 'IMAGE',
             publicId: img.publicId ?? null,
+            resourceType: img.resourceType ?? null,
             format: img.format ?? null,
-            width: img.width ?? null,
-            height: img.height ?? null,
-            durationSeconds: img.durationSeconds ?? null,
             sortOrder,
           };
           if (img.id) {
@@ -312,13 +296,11 @@ adminRouter.patch(
     });
     await audit(req.user!.sub, 'PRODUCT_UPDATED', 'Product', updated.id, body, req.ip);
 
-    // Best-effort cleanup AFTER the commit, and only for assets that are no
+    // Best-effort cleanup AFTER the commit, and only for media that are no
     // longer referenced by any product (shared/seed URLs are never destroyed).
-    // If the transaction had failed, nothing would have been deleted, so a
-    // failed save never destroys an asset that is still attached to a product.
-    for (const asset of removedMedia) {
-      const stillUsed = await prisma.productImage.findFirst({ where: { url: asset.url } });
-      if (!stillUsed) await destroyMedia(asset);
+    for (const ref of removedImageRefs) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url: ref.url } });
+      if (!stillUsed) await destroyImage(ref);
     }
     res.json({ data: { id: updated.id, slug: updated.slug } });
   },
@@ -346,7 +328,7 @@ adminRouter.post(
 // historical transaction data must never be destroyed. For products without
 // order history the delete cascades to images/features/variants/inventory
 // (all schema-level Cascade relations), is audit-logged, and removes only
-// assets hosted in our own storage.
+// images hosted in our own storage.
 adminRouter.delete(
   '/products/:id',
   validate({ params: z.object({ id: z.string().min(10).max(40) }) }),
@@ -371,20 +353,16 @@ adminRouter.delete(
       });
     }
 
-    const assets: StoredAssetRef[] = product.images.map((i) => ({
-      url: i.url,
-      publicId: i.publicId,
-      mediaType: i.mediaType === 'VIDEO' ? 'VIDEO' : 'IMAGE',
-    }));
+    const imageRefs = product.images.map((i) => ({ url: i.url, publicId: i.publicId, resourceType: i.resourceType }));
     await prisma.$transaction(async (tx) => {
       await tx.product.delete({ where: { id: product.id } });
     });
     await audit(req.user!.sub, 'PRODUCT_DELETED', 'Product', product.id, { slug: product.slug, name: product.name }, req.ip);
 
-    // Best-effort storage cleanup; only unreferenced hosted assets.
-    for (const asset of assets) {
-      const stillUsed = await prisma.productImage.findFirst({ where: { url: asset.url } });
-      if (!stillUsed) await destroyMedia(asset);
+    // Best-effort storage cleanup; only unreferenced hosted media.
+    for (const ref of imageRefs) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url: ref.url } });
+      if (!stillUsed) await destroyImage(ref);
     }
     res.json({ data: { id: product.id, deleted: true } });
   },

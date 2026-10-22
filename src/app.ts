@@ -17,8 +17,8 @@ import { contactRouter, adminContactRouter } from './modules/contact/contact.rou
 import { adminRouter } from './modules/admin/admin.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
 import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
-import { adminMediaRouter } from './modules/admin/media.routes';
-import { mediaStorageConfigured } from './modules/admin/media.storage';
+import { adminImagesRouter } from './modules/admin/admin.images.routes';
+import { imageStorageConfigured } from './modules/admin/image.storage';
 import { resendInboundRouter } from './modules/email/inbound.routes';
 import { emailStatus } from './modules/email/email.config';
 
@@ -56,8 +56,16 @@ export const createApp = (): Express => {
   const api = express.Router();
   api.use(apiLimiter(60_000, 300)); // global baseline
 
-  api.get('/health', (_req, res) =>
-    res.json({ data: { status: 'ok', email: { sendingConfigured: emailStatus().sendingConfigured }, storage: { configured: mediaStorageConfigured() } } }),
+  api.get(
+    '/health',
+    (_req, res) =>
+      res.json({
+        data: {
+          status: 'ok',
+          email: { sendingConfigured: emailStatus().sendingConfigured },
+          storage: { configured: imageStorageConfigured() },
+        },
+      }),
   );
 
   // Public + customer
@@ -82,7 +90,7 @@ export const createApp = (): Express => {
   api.use(
     '/admin',
     adminRouter,
-    adminMediaRouter,
+    adminImagesRouter,
     adminShippingRouter,
     adminReturnsRouter,
     adminReviewsRouter,
