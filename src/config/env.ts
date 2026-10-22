@@ -28,6 +28,28 @@ const envSchema = z.object({
   EMAIL_REPLY_TO: z.string().optional().default(''),
   SUPPORT_EMAIL: z.string().default('support@kiensports.com'),
   BUSINESS_NOTIFICATION_EMAIL: z.string().optional().default(''),
+  // ---- Checkout / payment lifecycle ----
+  // Prepaid checkout attempts older than this many minutes are expired:
+  // payment marked EXPIRED, order CANCELLED, inventory reservation released.
+  // 0 disables expiry.
+  PENDING_PAYMENT_TTL_MINUTES: z.coerce.number().int().min(0).default(60),
+  // COD eligibility cap in whole rupees (0 = no cap).
+  COD_MAX_ORDER_VALUE_RUPEES: z.coerce.number().int().min(0).default(0),
+  // COD fulfilment policy: 'true' allows dispatch while payment is still
+  // COD_PENDING (cash collected on/after delivery); 'false' requires the
+  // admin to record collection before dispatch.
+  COD_ALLOW_DISPATCH_UNPAID: z.string().default('true'),
+  // Base URL used to build admin links inside business notifications,
+  // e.g. https://kiensports.com/admin/orders
+  ADMIN_ORDER_URL_BASE: z.string().optional().default(''),
+  // ---- WhatsApp Business Platform (Meta Cloud API) - optional, OFF by default.
+  // Requires a Meta Business account, a registered phone number and approved
+  // templates; Meta charges per-conversation pricing. Until a real test
+  // message succeeds, notifications must be treated as email-only.
+  WHATSAPP_ENABLED: z.string().default('false'),
+  WHATSAPP_TOKEN: z.string().optional().default(''),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(''),
+  WHATSAPP_RECIPIENT: z.string().optional().default(''),
 });
 
 const parsed = envSchema.safeParse(process.env);

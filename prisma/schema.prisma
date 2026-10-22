@@ -373,7 +373,7 @@ model Payment {
   providerPaymentId String?
   method            PaymentMethod
   amountPaise       Int
-  status            String       @default("CREATED") // CREATED | AUTHORIZED | CAPTURED | FAILED | REFUNDED
+  status            String       @default("CREATED") // CREATED | AUTHORIZED | CAPTURED | FAILED | REFUNDED | EXPIRED | COD_PENDING | COD_COLLECTED
   webhookVerifiedAt DateTime?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
@@ -529,4 +529,27 @@ model InboundEmail {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------- business notifications
+
+// Durable notification outbox. Every business event (order created, payment
+// captured/failed/expired, COD collected, meaningful cart activity) is
+// recorded exactly once (unique dedupeKey) and delivered by a best-effort
+// flush pass (email via Resend, optional WhatsApp Business Platform).
+// Payloads contain order/customer contact details for the business
+// notification itself; they are never logged.
+model NotificationOutbox {
+  id        String    @id @default(cuid())
+  type      String // ORDER_CREATED | PAYMENT_SUCCEEDED | PAYMENT_FAILED | PAYMENT_EXPIRED | PAYMENT_LATE | COD_COLLECTED | CART_ACTIVITY
+  dedupeKey String    @unique
+  status    String    @default("PENDING") // PENDING | SENT | FAILED
+  attempts  Int       @default(0)
+  lastError String?
+  payload   Json
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  sentAt    DateTime?
+
+  @@index([status, createdAt])
 }

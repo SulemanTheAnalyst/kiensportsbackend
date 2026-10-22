@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { validate } from '../../middleware/validate';
 import { optionalAuth, requireAuth } from '../../middleware/auth';
 import { apiLimiter } from '../../middleware/errorHandler';
-import { createOrder, getOrderForCustomer, listCustomerOrders } from '../order/order.service';
+import { createOrder, getOrderForCustomer, listCustomerOrders, expirePendingOrderIfStale } from '../order/order.service';
 import { paymentService } from './payment.service';
 import { serializeOrder } from '../order/order.service';
 import { MockGateway } from './mock.gateway';
@@ -68,8 +68,16 @@ orderRouter.get(
   '/:orderNumber/status',
   validate({ params: z.object({ orderNumber: z.string().min(6).max(40) }) }),
   async (req, res) => {
-    const order = await prisma.order.findUnique({ where: { orderNumber: String(req.params.orderNumber) } });
+    let order = await prisma.order.findUnique({ where: { orderNumber: String(req.params.orderNumber) } });
     if (!order) throw badRequest('Order not found');
+    // Lazy expiry: when this prepaid attempt is older than the configured
+    // TTL, expire it now (cancel the order, release the reservation) instead
+    // of letting the customer poll a dead checkout forever. A concurrent
+    // verified webhook can never be overwritten (row lock + status re-check).
+    if (order.status === 'PENDING_PAYMENT') {
+      await expirePendingOrderIfStale(order.orderNumber);
+      order = await prisma.order.findUniqueOrThrow({ where: { orderNumber: order.orderNumber } });
+    }
     // Public payload: only statuses and order number - no PII.
     res.json({
       data: { orderNumber: order.orderNumber, status: order.status, paymentStatus: order.paymentStatus },

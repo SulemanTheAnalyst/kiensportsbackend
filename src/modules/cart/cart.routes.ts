@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { validate } from '../../middleware/validate';
 import { optionalAuth } from '../../middleware/auth';
+import { apiLimiter } from '../../middleware/errorHandler';
+import { notifyCartAdd } from '../notifications/notifications';
 import { getOrCreateCart, setCartCookieIfNeeded, CART_COOKIE } from './cart.session';
 import { addItem, updateItem, removeItem, serializeCart } from './cart.service';
 import { prisma } from '../../lib/prisma';
@@ -18,6 +20,8 @@ cartRouter.get('/', async (req, res) => {
 
 cartRouter.post(
   '/items',
+  // Abuse protection for the notification hook: bounded request rate.
+  apiLimiter(60_000, 60),
   validate({
     body: z.object({
       variantId: z.string().min(10).max(40),
@@ -26,8 +30,23 @@ cartRouter.post(
   }),
   async (req, res) => {
     const cart = await getOrCreateCart(req);
+    // Meaningful-add detection: only the first time a variant enters this
+    // cart (within the notification cooldown window) triggers a business
+    // notification. Quantity bumps and repeated clicks do not. The event is
+    // recorded server-side; a cart addition is never described as a purchase.
+    const existing = await prisma.cartItem.findUnique({
+      where: { cartId_variantId: { cartId: cart.id, variantId: req.body.variantId } },
+    });
     const updated = await addItem(cart.id, req.body.variantId, req.body.quantity);
     setCartCookieIfNeeded(req, res, cart);
+    if (!existing) {
+      await notifyCartAdd({
+        cartId: cart.id,
+        variantId: req.body.variantId,
+        quantity: req.body.quantity,
+        userId: req.user?.sub ?? null,
+      });
+    }
     res.status(201).json({ data: serializeCart(updated) });
   },
 );
