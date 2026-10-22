@@ -42,7 +42,7 @@ export const createOrder = async (
   await validateCartForCheckout(cart);
 
   const email = input.email.toLowerCase();
-  const order = await prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     // Lock inventory rows to prevent overselling under concurrency.
     const variantIds = cart.items.map((i) => i.variantId);
     const locked = await tx.$queryRaw<{ variantId: string; availableQty: number; reservedQty: number }[]>`
@@ -132,21 +132,15 @@ export const createOrder = async (
     return created;
   }, { timeout: 15000 });
 
+  // The snapshot captured inside the transaction predates the payment row
+  // created later in the same transaction (its `payments` include is empty).
+  // Re-fetch the complete order so the provider session can be created from it.
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: created.id }, include: orderInclude });
+
   // Provider session creation happens outside the DB transaction.
   const payment = await paymentService.createPaymentSession(order);
   return { order, payment };
 };
-
-export interface AddressInput {
-  firstName: string;
-  lastName: string;
-  line1: string;
-  line2?: string;
-  city: string;
-  state: string;
-  pincode: string;
-  phone: string;
-}
 
 export const serializeOrder = (order: Prisma.OrderGetPayload<{ include: typeof orderInclude }>, withEvents = false) => {
   const base = {
