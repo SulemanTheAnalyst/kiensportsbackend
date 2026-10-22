@@ -345,8 +345,8 @@ run('admin product media (images + videos)', () => {
       __setStorageForTests(null);
     }
 
-    // Now remove the referencing row on the other product -> destroy fires.
-    await prisma.productImage.deleteMany({ where: { productId: other.id } });
+    // Deleting the referencing product (cascade removes its row, then the
+    // unreferenced hosted video is destroyed).
     const { __setStorageForTests: set2 } = await import('../../src/modules/admin/image.storage');
     const destroyed2: string[] = [];
     set2({
@@ -372,6 +372,22 @@ run('admin product media (images + videos)', () => {
   // ---- Storefront compatibility ------------------------------------------
 
   it('storefront product payload separates images and videos', async () => {
+    // Re-attach the video via PATCH so the public payload is verified with mixed media.
+    const detail = await request(app)
+      .get('/api/v1/admin/catalog/products/' + productId)
+      .set('Authorization', 'Bearer ' + adminToken);
+    const img = detail.body.data.images.find((i: { mediaType: string }) => i.mediaType === 'IMAGE');
+    const patch = await request(app)
+      .patch('/api/v1/admin/products/' + productId)
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({
+        images: [
+          { id: img.id, url: img.url, mediaType: 'IMAGE', publicId: imageUrlRef.publicId, resourceType: imageUrlRef.resourceType },
+          { url: videoUrl, alt: 'Clip', mediaType: 'VIDEO', publicId: videoRef.publicId, resourceType: videoRef.resourceType, format: 'mp4' },
+        ],
+      });
+    expect(patch.status).toBe(200);
+
     const res = await request(app).get('/api/v1/products/' + slug);
     expect(res.status).toBe(200);
     const images: string[] = res.body.data.images;
@@ -386,7 +402,8 @@ run('admin product media (images + videos)', () => {
   it('legacy IMAGE-only products keep working (no videos array entries)', async () => {
     const res = await request(app).get('/api/v1/products');
     expect(res.status).toBe(200);
-    const products = res.body.data as { images: string[]; videos?: { url: string }[] }[];
+    // The list route wraps the paginated payload: body.data.data or body.data.
+    const products = (res.body.data?.data ?? res.body.data) as { images: string[]; videos?: { url: string }[] }[];
     expect(products.length).toBeGreaterThan(0);
     for (const p of products) {
       expect(Array.isArray(p.images)).toBe(true);
