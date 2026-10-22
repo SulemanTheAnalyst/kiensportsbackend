@@ -350,9 +350,14 @@ run('admin product management workflow (integration)', () => {
     const uploaded: Buffer[] = [];
     __setStorageForTests({
       configured: () => true,
-      upload: async (buffer) => {
+      upload: async (buffer, _filename, mediaType) => {
         uploaded.push(buffer);
-        return { url: 'https://res.cloudinary.com/test/image/upload/v1/kiensports/products/fake-' + uploaded.length, publicId: 'kiensports/products/fake-' + uploaded.length };
+        return {
+          url: 'https://res.cloudinary.com/test/' + (mediaType === 'VIDEO' ? 'video' : 'image') + '/upload/v1/kiensports/products/fake-' + uploaded.length,
+          publicId: 'kiensports/products/fake-' + uploaded.length,
+          resourceType: mediaType === 'VIDEO' ? 'video' : 'image',
+          format: 'png',
+        };
       },
       destroy: async () => undefined,
     });

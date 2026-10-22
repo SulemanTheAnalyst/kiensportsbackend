@@ -22,6 +22,7 @@ export const serializeProduct = (p: ProductWithRelations) => {
     name: v.colorName,
     hex: v.colorHex,
     images: p.images
+      .filter((i) => (i.mediaType ?? 'IMAGE') === 'IMAGE')
       .filter((i) => !i.colorName || i.colorName === v.colorName)
       .map((i) => i.url),
   }));
@@ -37,7 +38,10 @@ export const serializeProduct = (p: ProductWithRelations) => {
     compareAtPrice: p.compareAtPaise ? paiseToRupees(p.compareAtPaise) : undefined,
     colors,
     sizes: [...new Set(activeVariants.map((v) => v.size).filter((s): s is string => !!s))],
-    images: p.images.map((i) => i.url),
+    images: p.images.filter((i) => (i.mediaType ?? 'IMAGE') === 'IMAGE').map((i) => i.url),
+    videos: p.images
+      .filter((i) => i.mediaType === 'VIDEO')
+      .map((i) => ({ url: i.url, alt: i.alt ?? undefined })),
     description: p.description,
     shortDescription: p.shortDescription,
     features: p.features.map((f) => ({ title: f.title, description: f.description, icon: f.icon ?? undefined })),

@@ -37,7 +37,7 @@ const toAdminProduct = (p: FullProduct) => ({
   tags: p.tags,
   seoTitle: p.seoTitle,
   seoDescription: p.seoDescription,
-  images: p.images.map((i) => ({ id: i.id, url: i.url, alt: i.alt, colorName: i.colorName, sortOrder: i.sortOrder })),
+  images: p.images.map((i) => ({ id: i.id, url: i.url, alt: i.alt, colorName: i.colorName, sortOrder: i.sortOrder, mediaType: i.mediaType, publicId: i.publicId, resourceType: i.resourceType, format: i.format })),
   features: p.features.map((f) => ({ id: f.id, title: f.title, description: f.description, icon: f.icon, sortOrder: f.sortOrder })),
   variants: p.variants.map((v) => ({
     id: v.id,

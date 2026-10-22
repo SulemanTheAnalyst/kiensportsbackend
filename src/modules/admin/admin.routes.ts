@@ -26,6 +26,15 @@ const variantSchema = z.object({
   inventoryQty: z.number().int().min(0).default(0),
 });
 
+const imageEntrySchema = z.object({
+  url: z.string().url().max(500),
+  alt: z.string().max(200).optional(),
+  colorName: z.string().max(60).optional(),
+  mediaType: z.enum(['IMAGE', 'VIDEO']).optional(), // default IMAGE (legacy rows)
+  publicId: z.string().max(300).optional(),
+  resourceType: z.string().max(30).optional(),
+  format: z.string().max(30).optional(),
+});
 const productBodySchema = z.object({
   slug: z.string().min(2).max(120).regex(/^[a-z0-9-]+$/),
   name: z.string().min(2).max(200),
@@ -46,7 +55,7 @@ const productBodySchema = z.object({
   tags: z.array(z.string().max(40)).default([]),
   seoTitle: z.string().max(200).optional().nullable(),
   seoDescription: z.string().max(500).optional().nullable(),
-  images: z.array(z.object({ url: z.string().url().max(500), alt: z.string().max(200).optional(), colorName: z.string().max(60).optional() })).default([]),
+  images: z.array(imageEntrySchema).default([]),
   features: z.array(z.object({ title: z.string().max(120), description: z.string().max(1000), icon: z.string().max(60).optional() })).default([]),
   variants: z.array(variantSchema).min(1),
 });
@@ -55,11 +64,10 @@ const productBodySchema = z.object({
 // Entries with an id are updated (and re-ordered by array position);
 // entries without an id are created; existing rows whose ids are absent
 // from the array are deleted. This keeps every PATCH atomic.
-const imageUpdateSchema = z.object({
-  id: z.string().min(10).max(40).optional(),
-  url: z.string().url().max(500),
+const imageUpdateSchema = imageEntrySchema.extend({
   alt: z.string().max(200).optional().nullable(),
   colorName: z.string().max(60).optional().nullable(),
+  id: z.string().min(10).max(40).optional(),
 });
 
 const featureUpdateSchema = z.object({
@@ -139,7 +147,7 @@ adminRouter.post(
           seoDescription: body.seoDescription ?? null,
           category: { connect: { id: category.id } },
           collection: body.collectionSlug ? { connect: { slug: body.collectionSlug } } : undefined,
-          images: { create: body.images.map((i, idx) => ({ url: i.url, alt: i.alt, colorName: i.colorName, sortOrder: idx })) },
+          images: { create: body.images.map((i, idx) => ({ url: i.url, alt: i.alt, colorName: i.colorName, mediaType: i.mediaType ?? 'IMAGE', publicId: i.publicId ?? null, resourceType: i.resourceType ?? null, format: i.format ?? null, sortOrder: idx })) },
           features: { create: body.features.map((f, idx) => ({ ...f, sortOrder: idx })) },
           variants: {
             create: body.variants.map((v) => ({
@@ -231,19 +239,28 @@ adminRouter.patch(
     if (body.categorySlug !== undefined) data.category = { connect: { slug: body.categorySlug } };
     if (body.collectionSlug !== undefined) data.collection = body.collectionSlug ? { connect: { slug: body.collectionSlug } } : { disconnect: true };
 
-    const removedImageUrls: string[] = [];
+    const removedImageRefs: { url: string; publicId: string | null; resourceType: string | null }[] = [];
     const updated = await prisma.$transaction(async (tx) => {
       if (body.images) {
         const keptIds = new Set(body.images.filter((i) => i.id).map((i) => i.id!));
         for (const img of existing.images) {
           if (!keptIds.has(img.id)) {
-            removedImageUrls.push(img.url);
+            removedImageRefs.push({ url: img.url, publicId: img.publicId, resourceType: img.resourceType });
             await tx.productImage.delete({ where: { id: img.id } });
           }
         }
         let sortOrder = 0;
         for (const img of body.images) {
-          const fields = { url: img.url, alt: img.alt ?? null, colorName: img.colorName ?? null, sortOrder };
+          const fields = {
+            url: img.url,
+            alt: img.alt ?? null,
+            colorName: img.colorName ?? null,
+            mediaType: img.mediaType ?? 'IMAGE',
+            publicId: img.publicId ?? null,
+            resourceType: img.resourceType ?? null,
+            format: img.format ?? null,
+            sortOrder,
+          };
           if (img.id) {
             await tx.productImage.update({ where: { id: img.id }, data: fields });
           } else {
@@ -279,11 +296,11 @@ adminRouter.patch(
     });
     await audit(req.user!.sub, 'PRODUCT_UPDATED', 'Product', updated.id, body, req.ip);
 
-    // Best-effort cleanup AFTER the commit, and only for images that are no
+    // Best-effort cleanup AFTER the commit, and only for media that are no
     // longer referenced by any product (shared/seed URLs are never destroyed).
-    for (const url of removedImageUrls) {
-      const stillUsed = await prisma.productImage.findFirst({ where: { url } });
-      if (!stillUsed) await destroyImage(url);
+    for (const ref of removedImageRefs) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url: ref.url } });
+      if (!stillUsed) await destroyImage(ref);
     }
     res.json({ data: { id: updated.id, slug: updated.slug } });
   },
@@ -336,16 +353,16 @@ adminRouter.delete(
       });
     }
 
-    const imageUrls = product.images.map((i) => i.url);
+    const imageRefs = product.images.map((i) => ({ url: i.url, publicId: i.publicId, resourceType: i.resourceType }));
     await prisma.$transaction(async (tx) => {
       await tx.product.delete({ where: { id: product.id } });
     });
     await audit(req.user!.sub, 'PRODUCT_DELETED', 'Product', product.id, { slug: product.slug, name: product.name }, req.ip);
 
-    // Best-effort storage cleanup; only unreferenced hosted images.
-    for (const url of imageUrls) {
-      const stillUsed = await prisma.productImage.findFirst({ where: { url } });
-      if (!stillUsed) await destroyImage(url);
+    // Best-effort storage cleanup; only unreferenced hosted media.
+    for (const ref of imageRefs) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url: ref.url } });
+      if (!stillUsed) await destroyImage(ref);
     }
     res.json({ data: { id: product.id, deleted: true } });
   },
