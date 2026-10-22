@@ -1,8 +1,73 @@
 import { Router } from 'express';
-import { Prisma, ProductStatus } from '@prisma/client';
+import { Prisma, ProductStatus, Product, Category, Collection, ProductImage, ProductFeature, ProductVariant, Inventory } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { paiseToRupees } from '../../lib/money';
+import { notFound } from '../../lib/errors';
+
+type FullProduct = Product & {
+  category: Category;
+  collection: Collection | null;
+  images: ProductImage[];
+  features: ProductFeature[];
+  variants: Array<ProductVariant & { inventory: Inventory | null }>;
+};
+
+const toAdminProduct = (p: FullProduct) => ({
+  id: p.id,
+  slug: p.slug,
+  name: p.name,
+  shortDescription: p.shortDescription,
+  description: p.description,
+  status: p.status,
+  price: paiseToRupees(p.pricePaise),
+  compareAtPrice: p.compareAtPaise ? paiseToRupees(p.compareAtPaise) : null,
+  categorySlug: p.category.slug,
+  categoryName: p.category.name,
+  categoryWorld: p.category.world,
+  collectionSlug: p.collection?.slug ?? null,
+  collectionName: p.collection?.name ?? null,
+  isFeatured: p.isFeatured,
+  isNewArrival: p.isNewArrival,
+  isBestSeller: p.isBestSeller,
+  dimensions: p.dimensions,
+  weightGrams: p.weightGrams,
+  capacity: p.capacity,
+  materials: p.materials,
+  tags: p.tags,
+  seoTitle: p.seoTitle,
+  seoDescription: p.seoDescription,
+  images: p.images.map((i) => ({ id: i.id, url: i.url, alt: i.alt, colorName: i.colorName, sortOrder: i.sortOrder })),
+  features: p.features.map((f) => ({ id: f.id, title: f.title, description: f.description, icon: f.icon, sortOrder: f.sortOrder })),
+  variants: p.variants.map((v) => ({
+    id: v.id,
+    sku: v.sku,
+    colorName: v.colorName,
+    colorHex: v.colorHex,
+    size: v.size,
+    price: v.pricePaise ? paiseToRupees(v.pricePaise) : null,
+    isActive: v.isActive,
+    inventory: v.inventory
+      ? {
+          availableQty: v.inventory.availableQty,
+          reservedQty: v.inventory.reservedQty,
+          soldQty: v.inventory.soldQty,
+          lowStockThreshold: v.inventory.lowStockThreshold,
+          updatedAt: v.inventory.updatedAt,
+        }
+      : null,
+  })),
+  createdAt: p.createdAt,
+  updatedAt: p.updatedAt,
+});
+
+const fullInclude = {
+  category: true,
+  collection: true,
+  images: { orderBy: { sortOrder: 'asc' as const } },
+  features: { orderBy: { sortOrder: 'asc' as const } },
+  variants: { include: { inventory: true }, orderBy: { sku: 'asc' as const } },
+};
 
 /**
  * Admin catalog listing with search/filter support.
@@ -41,13 +106,7 @@ adminCatalogRouter.get('/catalog/products', async (req, res) => {
   const [items, total] = await Promise.all([
     prisma.product.findMany({
       where,
-      include: {
-        category: true,
-        collection: true,
-        images: { orderBy: { sortOrder: 'asc' } },
-        features: { orderBy: { sortOrder: 'asc' } },
-        variants: { include: { inventory: true }, orderBy: { sku: 'asc' } },
-      },
+      include: fullInclude,
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
@@ -56,55 +115,21 @@ adminCatalogRouter.get('/catalog/products', async (req, res) => {
   ]);
 
   res.json({
-    data: items.map((p) => ({
-      id: p.id,
-      slug: p.slug,
-      name: p.name,
-      shortDescription: p.shortDescription,
-      description: p.description,
-      status: p.status,
-      price: paiseToRupees(p.pricePaise),
-      compareAtPrice: p.compareAtPaise ? paiseToRupees(p.compareAtPaise) : null,
-      categorySlug: p.category.slug,
-      categoryName: p.category.name,
-      categoryWorld: p.category.world,
-      collectionSlug: p.collection?.slug ?? null,
-      collectionName: p.collection?.name ?? null,
-      isFeatured: p.isFeatured,
-      isNewArrival: p.isNewArrival,
-      isBestSeller: p.isBestSeller,
-      dimensions: p.dimensions,
-      weightGrams: p.weightGrams,
-      capacity: p.capacity,
-      materials: p.materials,
-      tags: p.tags,
-      seoTitle: p.seoTitle,
-      seoDescription: p.seoDescription,
-      images: p.images.map((i) => ({ id: i.id, url: i.url, alt: i.alt, colorName: i.colorName, sortOrder: i.sortOrder })),
-      features: p.features.map((f) => ({ id: f.id, title: f.title, description: f.description, icon: f.icon, sortOrder: f.sortOrder })),
-      variants: p.variants.map((v) => ({
-        id: v.id,
-        sku: v.sku,
-        colorName: v.colorName,
-        colorHex: v.colorHex,
-        size: v.size,
-        price: v.pricePaise ? paiseToRupees(v.pricePaise) : null,
-        isActive: v.isActive,
-        inventory: v.inventory
-          ? {
-              availableQty: v.inventory.availableQty,
-              reservedQty: v.inventory.reservedQty,
-              soldQty: v.inventory.soldQty,
-              lowStockThreshold: v.inventory.lowStockThreshold,
-              updatedAt: v.inventory.updatedAt,
-            }
-          : null,
-      })),
-      createdAt: p.createdAt,
-      updatedAt: p.updatedAt,
-    })),
+    data: items.map(toAdminProduct),
     page,
     limit,
     total,
   });
+});
+
+// Full record of a single product for the admin edit form. Accepts either the
+// product id or its slug (the existing admin product list links by slug).
+adminCatalogRouter.get('/catalog/products/:productId', async (req, res) => {
+  const key = String(req.params.productId);
+  const product = await prisma.product.findFirst({
+    where: { OR: [{ id: key }, { slug: key }] },
+    include: fullInclude,
+  });
+  if (!product) throw notFound('Product not found');
+  res.json({ data: toAdminProduct(product) });
 });

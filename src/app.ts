@@ -17,6 +17,7 @@ import { contactRouter, adminContactRouter } from './modules/contact/contact.rou
 import { adminRouter } from './modules/admin/admin.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
 import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
+import { adminImagesRouter } from './modules/admin/admin.images.routes';
 import { resendInboundRouter } from './modules/email/inbound.routes';
 import { emailStatus } from './modules/email/email.config';
 
@@ -80,6 +81,7 @@ export const createApp = (): Express => {
   api.use(
     '/admin',
     adminRouter,
+    adminImagesRouter,
     adminShippingRouter,
     adminReturnsRouter,
     adminReviewsRouter,

@@ -8,6 +8,7 @@ import { requireAuth, requireRole } from '../../middleware/auth';
 import { paiseToRupees, rupeesToPaise } from '../../lib/money';
 import { audit } from '../../lib/audit';
 import { notifyOrderCancelled, notifyOrderConfirmed, notifyOrderShipped } from '../email/order.emails';
+import { destroyImage } from './image.storage';
 
 // All admin routes require an authenticated user with the ADMIN role
 // (enforced below with requireRole) and mutations are audit-logged.
@@ -48,6 +49,29 @@ const productBodySchema = z.object({
   images: z.array(z.object({ url: z.string().url().max(500), alt: z.string().max(200).optional(), colorName: z.string().max(60).optional() })).default([]),
   features: z.array(z.object({ title: z.string().max(120), description: z.string().max(1000), icon: z.string().max(60).optional() })).default([]),
   variants: z.array(variantSchema).min(1),
+});
+
+// Update schemas: images/features entries may carry an existing `id`.
+// Entries with an id are updated (and re-ordered by array position);
+// entries without an id are created; existing rows whose ids are absent
+// from the array are deleted. This keeps every PATCH atomic.
+const imageUpdateSchema = z.object({
+  id: z.string().min(10).max(40).optional(),
+  url: z.string().url().max(500),
+  alt: z.string().max(200).optional().nullable(),
+  colorName: z.string().max(60).optional().nullable(),
+});
+
+const featureUpdateSchema = z.object({
+  id: z.string().min(10).max(40).optional(),
+  title: z.string().max(120),
+  description: z.string().max(1000),
+  icon: z.string().max(60).optional().nullable(),
+});
+
+const productUpdateSchema = productBodySchema.partial().extend({
+  images: z.array(imageUpdateSchema).optional(),
+  features: z.array(featureUpdateSchema).optional(),
 });
 
 adminRouter.get('/products', async (req, res) => {
@@ -145,12 +169,49 @@ adminRouter.post(
 
 adminRouter.patch(
   '/products/:id',
-  validate({ params: z.object({ id: z.string().min(10).max(40) }), body: productBodySchema.partial() }),
+  validate({ params: z.object({ id: z.string().min(10).max(40) }), body: productUpdateSchema }),
   async (req, res) => {
-    const existing = await prisma.product.findUnique({ where: { id: String(req.params.id) } });
+    const body = req.body as z.infer<typeof productUpdateSchema>;
+    const productId = String(req.params.id);
+
+    // Validate references BEFORE opening the transaction so bad requests
+    // fail fast without any writes.
+    if (body.categorySlug !== undefined) {
+      const category = await prisma.category.findUnique({ where: { slug: body.categorySlug } });
+      if (!category) throw badRequest('Unknown categorySlug');
+    }
+    if (body.collectionSlug) {
+      const collection = await prisma.collection.findUnique({ where: { slug: body.collectionSlug } });
+      if (!collection) throw badRequest('Unknown collectionSlug');
+    }
+    const existing = await prisma.product.findUnique({
+      where: { id: productId },
+      include: { images: true, features: true },
+    });
     if (!existing) throw notFound('Product not found');
-    const body = req.body as Partial<z.infer<typeof productBodySchema>>;
+    if (body.slug !== undefined && body.slug !== existing.slug) {
+      const dup = await prisma.product.findUnique({ where: { slug: body.slug } });
+      if (dup) throw badRequest('A product with this slug already exists');
+    }
+    if (body.images) {
+      const ids = body.images.filter((i) => i.id).map((i) => i.id!);
+      if (new Set(ids).size !== ids.length) throw badRequest('Duplicate image ids in request');
+      const owned = new Set(existing.images.map((i) => i.id));
+      for (const id of ids) {
+        if (!owned.has(id)) throw badRequest('Image id does not belong to this product');
+      }
+    }
+    if (body.features) {
+      const ids = body.features.filter((f) => f.id).map((f) => f.id!);
+      if (new Set(ids).size !== ids.length) throw badRequest('Duplicate feature ids in request');
+      const owned = new Set(existing.features.map((f) => f.id));
+      for (const id of ids) {
+        if (!owned.has(id)) throw badRequest('Feature id does not belong to this product');
+      }
+    }
+
     const data: Prisma.ProductUpdateInput = {};
+    if (body.slug !== undefined) data.slug = body.slug;
     if (body.name !== undefined) data.name = body.name;
     if (body.shortDescription !== undefined) data.shortDescription = body.shortDescription;
     if (body.description !== undefined) data.description = body.description;
@@ -170,9 +231,123 @@ adminRouter.patch(
     if (body.categorySlug !== undefined) data.category = { connect: { slug: body.categorySlug } };
     if (body.collectionSlug !== undefined) data.collection = body.collectionSlug ? { connect: { slug: body.collectionSlug } } : { disconnect: true };
 
-    const updated = await prisma.product.update({ where: { id: existing.id }, data });
+    const removedImageUrls: string[] = [];
+    const updated = await prisma.$transaction(async (tx) => {
+      if (body.images) {
+        const keptIds = new Set(body.images.filter((i) => i.id).map((i) => i.id!));
+        for (const img of existing.images) {
+          if (!keptIds.has(img.id)) {
+            removedImageUrls.push(img.url);
+            await tx.productImage.delete({ where: { id: img.id } });
+          }
+        }
+        let sortOrder = 0;
+        for (const img of body.images) {
+          const fields = { url: img.url, alt: img.alt ?? null, colorName: img.colorName ?? null, sortOrder };
+          if (img.id) {
+            await tx.productImage.update({ where: { id: img.id }, data: fields });
+          } else {
+            await tx.productImage.create({ data: { productId: existing.id, ...fields } });
+          }
+          sortOrder += 1;
+        }
+      }
+      if (body.features) {
+        const keptIds = new Set(body.features.filter((f) => f.id).map((f) => f.id!));
+        for (const feature of existing.features) {
+          if (!keptIds.has(feature.id)) {
+            await tx.productFeature.delete({ where: { id: feature.id } });
+          }
+        }
+        let sortOrder = 0;
+        for (const feature of body.features) {
+          const fields = {
+            title: feature.title,
+            description: feature.description,
+            icon: feature.icon ?? null,
+            sortOrder,
+          };
+          if (feature.id) {
+            await tx.productFeature.update({ where: { id: feature.id }, data: fields });
+          } else {
+            await tx.productFeature.create({ data: { productId: existing.id, ...fields } });
+          }
+          sortOrder += 1;
+        }
+      }
+      return tx.product.update({ where: { id: existing.id }, data });
+    });
     await audit(req.user!.sub, 'PRODUCT_UPDATED', 'Product', updated.id, body, req.ip);
+
+    // Best-effort cleanup AFTER the commit, and only for images that are no
+    // longer referenced by any product (shared/seed URLs are never destroyed).
+    for (const url of removedImageUrls) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url } });
+      if (!stillUsed) await destroyImage(url);
+    }
     res.json({ data: { id: updated.id, slug: updated.slug } });
+  },
+);
+
+// One-click archive: the safe alternative to deletion for products with order
+// history. Idempotent. Keeps the product (and its order references) intact
+// while removing it from the storefront (status ARCHIVED is not listed).
+adminRouter.post(
+  '/products/:id/archive',
+  validate({ params: z.object({ id: z.string().min(10).max(40) }) }),
+  async (req, res) => {
+    const product = await prisma.product.findUnique({ where: { id: String(req.params.id) } });
+    if (!product) throw notFound('Product not found');
+    if (product.status === 'ARCHIVED') {
+      return res.json({ data: { id: product.id, slug: product.slug, status: product.status } });
+    }
+    const updated = await prisma.product.update({ where: { id: product.id }, data: { status: 'ARCHIVED' } });
+    await audit(req.user!.sub, 'PRODUCT_ARCHIVED', 'Product', product.id, { slug: product.slug, from: product.status }, req.ip);
+    res.json({ data: { id: updated.id, slug: updated.slug, status: updated.status } });
+  },
+);
+
+// Hard delete. Refused (409) when the product has ever appeared on an order -
+// historical transaction data must never be destroyed. For products without
+// order history the delete cascades to images/features/variants/inventory
+// (all schema-level Cascade relations), is audit-logged, and removes only
+// images hosted in our own storage.
+adminRouter.delete(
+  '/products/:id',
+  validate({ params: z.object({ id: z.string().min(10).max(40) }) }),
+  async (req, res) => {
+    const product = await prisma.product.findUnique({
+      where: { id: String(req.params.id) },
+      include: { images: true },
+    });
+    if (!product) throw notFound('Product not found');
+
+    const orderItemCount = await prisma.orderItem.count({
+      where: { variant: { productId: product.id } },
+    });
+    if (orderItemCount > 0) {
+      return res.status(409).json({
+        error: {
+          code: 'PRODUCT_HAS_ORDERS',
+          message:
+            'This product has ' + orderItemCount + ' order item(s) and cannot be deleted without destroying order history. Archive it instead.',
+          orderItemCount,
+        },
+      });
+    }
+
+    const imageUrls = product.images.map((i) => i.url);
+    await prisma.$transaction(async (tx) => {
+      await tx.product.delete({ where: { id: product.id } });
+    });
+    await audit(req.user!.sub, 'PRODUCT_DELETED', 'Product', product.id, { slug: product.slug, name: product.name }, req.ip);
+
+    // Best-effort storage cleanup; only unreferenced hosted images.
+    for (const url of imageUrls) {
+      const stillUsed = await prisma.productImage.findFirst({ where: { url } });
+      if (!stillUsed) await destroyImage(url);
+    }
+    res.json({ data: { id: product.id, deleted: true } });
   },
 );
 
