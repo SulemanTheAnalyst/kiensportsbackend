@@ -97,7 +97,13 @@ export const validateCartForCheckout = async (cart: Cart) => {
 export const serializeCart = (cart: Cart) => {
   const items = cart.items.map((item) => {
     const currentUnitPaise = item.variant.pricePaise ?? item.variant.product.pricePaise;
-    const image = item.variant.product.images[0]?.url ?? null;
+    // Product media can now include VIDEO rows (mediaType). Cart/checkout
+    // thumbnails must only ever receive IMAGE rows: prefer the image tagged
+    // with this item's colour, then any IMAGE row. Legacy rows default to IMAGE.
+    const productImages = item.variant.product.images;
+    const imageRows = productImages.filter((i) => (i.mediaType ?? 'IMAGE') === 'IMAGE');
+    const colorImage = imageRows.find((i) => i.colorName === item.variant.colorName);
+    const image = (colorImage ?? imageRows[0])?.url ?? null;
     return {
       id: item.id,
       variantId: item.variantId,

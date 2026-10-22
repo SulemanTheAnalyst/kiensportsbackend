@@ -125,7 +125,9 @@ accountRouter.get('/wishlist', async (req, res) => {
     include: {
       product: {
         include: {
-          images: { orderBy: { sortOrder: 'asc' }, take: 1 },
+          // take: 5 because the first row(s) may be VIDEO media; the first
+          // IMAGE row is selected below (legacy rows default to IMAGE).
+          images: { orderBy: { sortOrder: 'asc' }, take: 5 },
           variants: { where: { isActive: true }, include: { inventory: true } },
         },
       },
@@ -139,7 +141,7 @@ accountRouter.get('/wishlist', async (req, res) => {
       slug: item.product.slug,
       price: paiseToRupees(item.product.pricePaise),
       color: item.product.variants[0]?.colorName ?? '',
-      image: item.product.images[0]?.url ?? null,
+      image: item.product.images.find((i) => (i.mediaType ?? 'IMAGE') === 'IMAGE')?.url ?? null,
       inStock: item.product.variants.some((v) => (v.inventory?.availableQty ?? 0) > 0),
     })),
   });

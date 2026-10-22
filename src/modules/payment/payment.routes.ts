@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../lib/prisma';
 import { validate } from '../../middleware/validate';
-import { optionalAuth } from '../../middleware/auth';
+import { optionalAuth, requireAuth } from '../../middleware/auth';
 import { apiLimiter } from '../../middleware/errorHandler';
 import { createOrder, getOrderForCustomer, listCustomerOrders } from '../order/order.service';
 import { paymentService } from './payment.service';
@@ -25,10 +25,14 @@ const addressSchema = z.object({
   phone: z.string().regex(/^(\+91)?[6-9][0-9]{9}$/), // Indian mobile numbers
 });
 
+// Orders are tied to an authenticated customer. Guests can browse and fill a
+// cart, but order creation requires a verified session; the customer identity
+// is taken from req.user (set by the trusted token middleware), never from
+// the request body.
 orderRouter.post(
   '/',
   apiLimiter(10 * 60_000, 20),
-  optionalAuth,
+  requireAuth,
   validate({
     body: z.object({
       email: z.string().email().max(254),
@@ -37,7 +41,15 @@ orderRouter.post(
     }),
   }),
   async (req, res) => {
-    const { order, payment } = await createOrder(req, req.body);
+    // Map the validated body onto the service contract explicitly. (The body
+    // key is `paymentMethod`; the service expects `method`. Passing the raw
+    // body previously left `method` undefined and made every valid checkout
+    // fail with a 500 at payment-record creation.)
+    const { order, payment } = await createOrder(req, {
+      email: req.body.email,
+      address: req.body.address,
+      method: req.body.paymentMethod,
+    });
     res.status(201).json({
       data: {
         order: serializeOrder(order),
