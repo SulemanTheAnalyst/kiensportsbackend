@@ -22,7 +22,7 @@ export const serializeProduct = (p: ProductWithRelations) => {
     name: v.colorName,
     hex: v.colorHex,
     images: p.images
-      .filter((i) => !i.colorName || i.colorName === v.colorName)
+      .filter((i) => i.mediaType !== 'VIDEO' && (!i.colorName || i.colorName === v.colorName))
       .map((i) => i.url),
   }));
   const available = activeVariants.some((v) => (v.inventory?.availableQty ?? 0) > 0);
@@ -37,7 +37,13 @@ export const serializeProduct = (p: ProductWithRelations) => {
     compareAtPrice: p.compareAtPaise ? paiseToRupees(p.compareAtPaise) : undefined,
     colors,
     sizes: [...new Set(activeVariants.map((v) => v.size).filter((s): s is string => !!s))],
-    images: p.images.map((i) => i.url),
+    images: p.images.filter((i) => i.mediaType !== 'VIDEO').map((i) => i.url),
+    // Product videos (managed alongside images in the admin media manager).
+    // Kept separate so product cards and galleries keep using the primary
+    // IMAGE for display while videos render in the product media section.
+    videos: p.images
+      .filter((i) => i.mediaType === 'VIDEO')
+      .map((i) => ({ url: i.url, width: i.width, height: i.height, durationSeconds: i.durationSeconds })),
     description: p.description,
     shortDescription: p.shortDescription,
     features: p.features.map((f) => ({ title: f.title, description: f.description, icon: f.icon ?? undefined })),

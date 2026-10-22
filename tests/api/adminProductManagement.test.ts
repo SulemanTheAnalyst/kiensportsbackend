@@ -346,13 +346,25 @@ run('admin product management workflow (integration)', () => {
   });
 
   it('accepts a valid PNG and returns the hosted url (fake storage injected)', async () => {
-    const { __setStorageForTests } = await import('../../src/modules/admin/image.storage');
+    const { __setStorageForTests } = await import('../../src/modules/admin/media.storage');
     const uploaded: Buffer[] = [];
     __setStorageForTests({
       configured: () => true,
-      upload: async (buffer) => {
+      missingEnvVars: () => [],
+      uploadImage: async (buffer) => {
         uploaded.push(buffer);
-        return { url: 'https://res.cloudinary.com/test/image/upload/v1/kiensports/products/fake-' + uploaded.length, publicId: 'kiensports/products/fake-' + uploaded.length };
+        return {
+          url: 'https://res.cloudinary.com/test/image/upload/v1/kiensports/products/fake-' + uploaded.length,
+          publicId: 'kiensports/products/fake-' + uploaded.length,
+          resourceType: 'image' as const,
+          format: 'png',
+          width: 800,
+          height: 800,
+          durationSeconds: null,
+        };
+      },
+      uploadVideo: async () => {
+        throw new Error('unexpected video upload in this suite');
       },
       destroy: async () => undefined,
     });
