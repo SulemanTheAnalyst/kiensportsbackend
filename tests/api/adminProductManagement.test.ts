@@ -229,6 +229,7 @@ run('admin product management workflow (integration)', () => {
         subtotalPaise: 149900,
         shippingPaise: 0,
         totalPaise: 149900,
+        shippingAddress: { firstName: 'CI', lastName: 'Test', line1: '1 Test St', city: 'Mumbai', state: 'MH', pincode: '400001', phone: '9999999999' },
         items: {
           create: {
             variantId: variant.id,
