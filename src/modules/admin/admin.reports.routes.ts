@@ -361,23 +361,86 @@ adminReportsRouter.get('/shipments', async (req, res) => {
 
 // ---------------- Inventory ----------------
 
+// Overview metrics for the admin Inventory page. Inventory VALUE is
+// intentionally not reported: the data model has no cost-price field, and
+// valuing stock at retail prices would be misleading. Cost tracking must be
+// added to the schema before valuation can be reported honestly.
+adminReportsRouter.get('/inventory/summary', async (_req, res) => {
+  const rows = await prisma.inventory.findMany({
+    select: { availableQty: true, reservedQty: true, soldQty: true, lowStockThreshold: true },
+  });
+  const totalItems = rows.length;
+  const unitsInStock = rows.reduce((a, r) => a + r.availableQty, 0);
+  const unitsReserved = rows.reduce((a, r) => a + r.reservedQty, 0);
+  const lowStockItems = rows.filter((r) => r.availableQty > 0 && r.availableQty <= r.lowStockThreshold).length;
+  const outOfStockItems = rows.filter((r) => r.availableQty === 0).length;
+  res.json({
+    data: {
+      totalItems,
+      unitsInStock,
+      unitsReserved,
+      lowStockItems,
+      outOfStockItems,
+    },
+  });
+});
+
 adminReportsRouter.get('/inventory', async (req, res) => {
   const { page, limit, skip } = pageParams(req);
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
+  const filter = typeof req.query.filter === 'string' ? req.query.filter : undefined;
+  // Stock-state filter resolved after the query (low/out-of-stock are
+  // relative to each row's own threshold).
   const where: Prisma.ProductVariantWhereInput = search
     ? { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { product: { name: { contains: search, mode: 'insensitive' } } }] }
     : {};
   const [items, total] = await Promise.all([
     prisma.productVariant.findMany({
       where,
-      include: { product: { select: { id: true, name: true, slug: true, status: true } }, inventory: true },
+      include: {
+        product: { select: { id: true, name: true, slug: true, status: true, images: { orderBy: { sortOrder: 'asc' }, take: 1, where: { mediaType: 'IMAGE' } } } },
+        inventory: true,
+      },
       orderBy: { sku: 'asc' },
       skip,
       take: limit,
     }),
     prisma.productVariant.count({ where }),
   ]);
-  res.json({ data: items, page, limit, total });
+  const mapped = items.map((v) => ({
+    id: v.id,
+    productId: v.productId,
+    sku: v.sku,
+    colorName: v.colorName,
+    colorHex: v.colorHex,
+    size: v.size,
+    pricePaise: v.pricePaise,
+    isActive: v.isActive,
+    product: {
+      id: v.product.id,
+      name: v.product.name,
+      slug: v.product.slug,
+      status: v.product.status,
+      image: v.product.images[0]?.url ?? null,
+    },
+    inventory: v.inventory
+      ? {
+          variantId: v.inventory.variantId,
+          availableQty: v.inventory.availableQty,
+          reservedQty: v.inventory.reservedQty,
+          soldQty: v.inventory.soldQty,
+          lowStockThreshold: v.inventory.lowStockThreshold,
+          updatedAt: v.inventory.updatedAt,
+        }
+      : null,
+  }));
+  const filtered =
+    filter === 'low'
+      ? mapped.filter((v) => (v.inventory?.availableQty ?? 0) > 0 && (v.inventory?.availableQty ?? 0) <= (v.inventory?.lowStockThreshold ?? 0))
+      : filter === 'out'
+        ? mapped.filter((v) => (v.inventory?.availableQty ?? 0) === 0)
+        : mapped;
+  res.json({ data: filtered, page, limit, total });
 });
 
 adminReportsRouter.get('/inventory/movements', async (req, res) => {
@@ -396,20 +459,39 @@ adminReportsRouter.get('/inventory/movements', async (req, res) => {
     }),
     prisma.inventoryMovement.count({ where }),
   ]);
-  // Flatten to the documented response shape (variant at the top level) so
-  // the admin frontend contract is unchanged.
+  // Resolve the admin responsible for each adjustment to an email so the UI
+  // can show who did it (actor ids are opaque on their own).
+  const actorIds = [...new Set(items.map((m) => m.actorId).filter((a): a is string => !!a))];
+  const actors = actorIds.length
+    ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, email: true } })
+    : [];
+  const emailByActor = new Map(actors.map((a) => [a.id, a.email]));
+  // Response shape: the frontend renders `variant: { sku, product: { name } }`
+  // (its documented contract). A previous revision flattened these fields to
+  // the top level; the frontend kept dereferencing `m.variant.sku`, which
+  // crashed the Inventory page with a blank white screen. Keep BOTH shapes:
+  // the nested contract the UI renders plus the flat fields for any consumer
+  // of the flattened form.
   res.json({
-    data: items.map((m) => ({
-      id: m.id,
-      variantId: m.variantId,
-      sku: m.inventory?.variant.sku ?? null,
-      product: m.inventory?.variant.product.name ?? null,
-      deltaQty: m.deltaQty,
-      type: m.type,
-      reference: m.reference,
-      actorId: m.actorId,
-      createdAt: m.createdAt,
-    })),
+    data: items.map((m) => {
+      const variant = m.inventory?.variant;
+      return {
+        id: m.id,
+        variantId: m.variantId,
+        sku: variant?.sku ?? null,
+        product: variant?.product.name ?? null,
+        deltaQty: m.deltaQty,
+        type: m.type,
+        reference: m.reference,
+        actorId: m.actorId,
+        actorEmail: m.actorId ? (emailByActor.get(m.actorId) ?? null) : null,
+        createdAt: m.createdAt,
+        variant: {
+          sku: variant?.sku ?? 'unknown',
+          product: { name: variant?.product.name ?? 'Unknown product' },
+        },
+      };
+    }),
     page,
     limit,
     total,

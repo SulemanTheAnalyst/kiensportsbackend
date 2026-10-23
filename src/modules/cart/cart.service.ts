@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { notFound, outOfStock } from '../../lib/errors';
-import { computeTotals, paiseToRupees } from '../../lib/money';
+import { computeTotals, paiseToRupees, type ShippingRule } from '../../lib/money';
 import { ApiError } from '../../lib/errors';
 
 // Validated include + explicit payload type (Prisma's documented pattern).
@@ -94,7 +94,7 @@ export const validateCartForCheckout = async (cart: Cart) => {
 };
 
 // Public shape: prices re-resolved server-side on every read.
-export const serializeCart = (cart: Cart) => {
+export const serializeCart = (cart: Cart, rule?: ShippingRule) => {
   const items = cart.items.map((item) => {
     const currentUnitPaise = item.variant.pricePaise ?? item.variant.product.pricePaise;
     // Product media can now include VIDEO rows (mediaType). Cart/checkout
@@ -123,6 +123,7 @@ export const serializeCart = (cart: Cart) => {
       unitPricePaise: item.variant.pricePaise ?? item.variant.product.pricePaise,
       quantity: item.quantity,
     })),
+    rule,
   );
   return {
     id: cart.id,

@@ -4,6 +4,7 @@ import { logger } from '../../lib/logger';
 import { prisma } from '../../lib/prisma';
 import { sendEmail } from '../email/email.service';
 import { escapeHtml } from '../email/email.templates';
+import { getSettings } from '../settings/settings.service';
 
 // Durable business-notification outbox.
 //
@@ -214,14 +215,18 @@ export const flushOutbox = async (): Promise<void> => {
       orderBy: { createdAt: 'asc' },
       take: 20,
     });
+    // Recipient: the settings-configured business email wins over the
+    // environment variable (Settings -> Notifications & Email).
+    const { notifications: notificationSettings } = await getSettings();
+    const businessEmail = notificationSettings.businessNotificationEmail || env.BUSINESS_NOTIFICATION_EMAIL;
     for (const row of rows) {
       try {
         const content = buildContent(row.type as BusinessEventType, (row.payload ?? {}) as BusinessEventPayload);
-        const emailConfigured = Boolean(env.BUSINESS_NOTIFICATION_EMAIL && env.RESEND_API_KEY);
-        let emailAccepted = false;
+        const emailConfigured = Boolean(businessEmail && env.RESEND_API_KEY);
         let error: string | null = emailConfigured ? null : 'EMAIL_NOT_CONFIGURED';
+        let emailAccepted = false;
         if (emailConfigured) {
-          const result = await sendEmail({ to: env.BUSINESS_NOTIFICATION_EMAIL as string, ...content });
+          const result = await sendEmail({ to: businessEmail as string, ...content });
           emailAccepted = result.accepted;
           if (!emailAccepted) error = result.error ?? 'EMAIL_REJECTED';
         }
@@ -269,12 +274,17 @@ export const notifyCartAdd = async (input: {
   userId: string | null;
 }): Promise<void> => {
   try {
+    // Cart-activity notifications are privacy-conscious and OFF by default;
+    // the administrator enables them in Settings -> Notifications & Email.
+    const { notifications: notificationSettings } = await getSettings();
+    if (!notificationSettings.notifyCartActivity) return;
+    const windowMinutes = notificationSettings.cartActivityWindowMinutes;
     const variant = await prisma.productVariant.findUnique({
       where: { id: input.variantId },
       include: { product: { select: { name: true } } },
     });
     if (!variant) return;
-    const bucket = Math.floor(Date.now() / (30 * 60_000));
+    const bucket = Math.floor(Date.now() / (windowMinutes * 60_000));
     const dedupeKey = 'CART_ACTIVITY:' + input.cartId + ':' + input.variantId + ':' + bucket;
     const payload: BusinessEventPayload = {
       cartOrSessionId: input.cartId,

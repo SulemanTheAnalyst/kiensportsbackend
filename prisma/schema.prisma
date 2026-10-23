@@ -157,6 +157,7 @@ model Product {
   variants   ProductVariant[]
   reviews    Review[]
   wishlistItems WishlistItem[]
+  couponProducts CouponProduct[]
 
   @@index([categoryId])
   @@index([status, isFeatured])
@@ -304,6 +305,10 @@ model Order {
   // all amounts in paise, snapshot at purchase time
   subtotalPaise Int
   discountPaise Int         @default(0)
+  // Applied coupon snapshot: the code + id captured at checkout. Historical
+  // order totals are immutable even if the coupon is edited/disabled later.
+  couponId      String?
+  couponCode    String?
   shippingPaise Int
   taxPaise      Int         @default(0)
   totalPaise    Int
@@ -318,6 +323,9 @@ model Order {
   shipments   Shipment[]
   statusEvents OrderStatusEvent[]
   returnRequests ReturnRequest[]
+  redemptions CouponRedemption[]
+
+  coupon    Coupon?          @relation("OrderCoupon", fields: [couponId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([status])
@@ -552,4 +560,98 @@ model NotificationOutbox {
   sentAt    DateTime?
 
   @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------- coupons
+// Discount rules are validated and calculated on the backend only. All
+// money values are INTEGER PAISE. discountValue is a whole percentage (1-90)
+// for PERCENT coupons and paise for FIXED coupons; FREE_SHIPPING coupons
+// ignore it. minimumOrderPaise is evaluated against the PRE-DISCOUNT
+// merchandise subtotal of eligible items (documented, enforced consistently).
+
+enum DiscountType {
+  PERCENT
+  FIXED
+  FREE_SHIPPING
+}
+
+model Coupon {
+  id            String      @id @default(cuid())
+  // normalised to UPPERCASE, trimmed; uniqueness enforced by the database
+  code          String      @unique
+  internalName  String
+  publicDescription String?
+  discountType  DiscountType
+  discountValue Int
+  minimumOrderPaise Int     @default(0)
+  maximumDiscountPaise Int?
+  startsAt      DateTime    @default(now())
+  expiresAt     DateTime?
+  isActive      Boolean     @default(true)
+  // isPublic: show in the public coupon listing endpoint. Private campaigns
+  // (customer-specific, internal) are never exposed publicly.
+  isPublic      Boolean     @default(false)
+  displayPriority Int       @default(0)
+  promoHeadline String?
+  totalUsageLimit Int?
+  perCustomerUsageLimit Int?
+  firstOrderOnly Boolean    @default(false)
+  // timesUsed counts ACTIVE redemptions (released ones decrement it), so it
+  // always reflects currently-consumed usage.
+  timesUsed     Int         @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  products   CouponProduct[]
+  redemptions CouponRedemption[]
+  orders     Order[]        @relation("OrderCoupon")
+
+  @@index([isActive, expiresAt])
+  @@index([isPublic, isActive])
+}
+
+// Optional per-product eligibility. No rows = all products are eligible.
+model CouponProduct {
+  couponId  String
+  productId String
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, productId])
+  @@index([productId])
+}
+
+// One row per order that redeemed a coupon. A redemption is RESERVED at
+// order creation (inside the same transaction, under a FOR UPDATE lock on
+// the coupon row) and RELEASED when the attempt fails, expires or the
+// order is cancelled - mirroring the inventory reservation lifecycle.
+model CouponRedemption {
+  id           String   @id @default(cuid())
+  couponId     String
+  orderId      String   @unique
+  userId       String?
+  email        String
+  discountPaise Int
+  createdAt    DateTime @default(now())
+  releasedAt   DateTime?
+  releasedReason String?
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  order  Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([couponId, userId])
+  @@index([couponId, releasedAt])
+}
+
+// ---------------------------------------------------------------- settings
+// Backend-managed business configuration (Settings section). One row per
+// settings section, value is the section JSON. Credentials and secrets are
+// NEVER stored here - they remain in environment variables / secret
+// management; the settings API only reports configured/not-configured.
+model BusinessSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  updatedBy String?
 }

@@ -6,6 +6,7 @@ import { apiLimiter } from '../../middleware/errorHandler';
 import { notifyCartAdd } from '../notifications/notifications';
 import { getOrCreateCart, setCartCookieIfNeeded, CART_COOKIE } from './cart.session';
 import { addItem, updateItem, removeItem, serializeCart } from './cart.service';
+import { getShippingRule } from '../settings/settings.service';
 import { prisma } from '../../lib/prisma';
 import { notFound } from '../../lib/errors';
 
@@ -15,7 +16,9 @@ cartRouter.use(optionalAuth);
 cartRouter.get('/', async (req, res) => {
   const cart = await getOrCreateCart(req);
   setCartCookieIfNeeded(req, res, cart);
-  res.json({ data: serializeCart(cart) });
+  // Shipping uses the configured business rule (Settings -> Payments &
+  // Checkout); the frontend always displays what the backend enforces.
+  res.json({ data: serializeCart(cart, await getShippingRule()) });
 });
 
 cartRouter.post(
@@ -47,7 +50,7 @@ cartRouter.post(
         userId: req.user?.sub ?? null,
       });
     }
-    res.status(201).json({ data: serializeCart(updated) });
+    res.status(201).json({ data: serializeCart(updated, await getShippingRule()) });
   },
 );
 
@@ -60,7 +63,7 @@ cartRouter.patch(
   async (req, res) => {
     const cart = await getOrCreateCart(req);
     const updated = await updateItem(cart.id, String(req.params.itemId), req.body.quantity);
-    res.json({ data: serializeCart(updated) });
+    res.json({ data: serializeCart(updated, await getShippingRule()) });
   },
 );
 
@@ -70,20 +73,21 @@ cartRouter.delete(
   async (req, res) => {
     const cart = await getOrCreateCart(req);
     const updated = await removeItem(cart.id, String(req.params.itemId));
-    res.json({ data: serializeCart(updated) });
+    res.json({ data: serializeCart(updated, await getShippingRule()) });
   },
 );
 
 // Lightweight shipping/total quote used by the checkout summary.
 cartRouter.get('/quote', async (req, res) => {
   const cart = await getOrCreateCart(req);
-  const serialized = serializeCart(cart);
+  const rule = await getShippingRule();
+  const serialized = serializeCart(cart, rule);
   res.json({
     data: {
       subtotal: serialized.subtotal,
       shipping: serialized.shipping,
       total: serialized.total,
-      freeShippingThreshold: 2000,
+      freeShippingThreshold: Math.round(rule.freeShippingThresholdPaise / 100),
     },
   });
 });

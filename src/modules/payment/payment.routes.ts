@@ -38,6 +38,10 @@ orderRouter.post(
       email: z.string().email().max(254),
       address: addressSchema,
       paymentMethod: z.enum(['CARD', 'UPI', 'COD']),
+      // Optional coupon code: the client sends ONLY the code. The discount is
+      // always calculated and verified server-side; no client amount is ever
+      // trusted.
+      couponCode: z.string().min(2).max(40).optional().nullable(),
     }),
   }),
   async (req, res) => {
@@ -49,6 +53,7 @@ orderRouter.post(
       email: req.body.email,
       address: req.body.address,
       method: req.body.paymentMethod,
+      couponCode: req.body.couponCode ?? null,
     });
     res.status(201).json({
       data: {
