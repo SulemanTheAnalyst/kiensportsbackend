@@ -15,6 +15,9 @@ import { reviewsRouter, adminReviewsRouter } from './modules/reviews/reviews.rou
 import { newsletterRouter, adminNewsletterRouter } from './modules/newsletter/newsletter.routes';
 import { contactRouter, adminContactRouter } from './modules/contact/contact.routes';
 import { adminRouter } from './modules/admin/admin.routes';
+import { adminCouponRouter } from './modules/coupon/admin.coupon.routes';
+import { adminSettingsRouter } from './modules/settings/admin.settings.routes';
+import { couponRouter } from './modules/coupon/coupon.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
 import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
 import { adminImagesRouter } from './modules/admin/admin.images.routes';
@@ -79,6 +82,7 @@ export const createApp = (): Express => {
   api.use('/returns', returnsRouter);
   api.use('/newsletter', newsletterRouter);
   api.use('/contact', contactRouter);
+  api.use('/coupons', couponRouter); // public coupons + validation
 
   // Payments (webhook mounts under /payments too)
   api.use('/payments', paymentWebhookRouter);
@@ -99,6 +103,11 @@ export const createApp = (): Express => {
     adminReportsRouter,
     adminCatalogRouter
   );
+  // These routers declare their own sub-path routes ('/', '/:id', ...) and
+  // apply requireAuth + requireRole('ADMIN') internally, so they mount at
+  // their full admin sub-path.
+  api.use('/admin/coupons', adminCouponRouter);
+  api.use('/admin/settings', adminSettingsRouter);
 
   app.use(env.API_BASE_PATH, api);
   app.use(notFoundHandler);

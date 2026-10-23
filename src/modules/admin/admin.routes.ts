@@ -12,6 +12,9 @@ import { destroyImage } from './image.storage';
 import { env } from '../../config/env';
 import { expireStalePendingPayments } from '../order/order.service';
 import { recordBusinessEvent, orderNotificationPayload } from '../notifications/notifications';
+import { releaseCouponRedemptionInTx } from '../coupon/coupon.service';
+import { getSettings } from '../settings/settings.service';
+import { sendEmailBackground } from '../email/email.service';
 
 // All admin routes require an authenticated user with the ADMIN role
 // (enforced below with requireRole) and mutations are audit-logged.
@@ -127,6 +130,7 @@ adminRouter.post(
     if (dup) throw badRequest('A product with this slug already exists');
     const skus = body.variants.map((v) => v.sku);
     if (new Set(skus).size !== skus.length) throw badRequest('Duplicate SKUs in request');
+    const lowStockDefault = (await getSettings()).inventory.lowStockThresholdDefault;
 
     const product = await prisma.$transaction(async (tx) => {
       const created = await tx.product.create({
@@ -159,7 +163,7 @@ adminRouter.post(
               colorHex: v.colorHex,
               size: v.size ?? null,
               pricePaise: v.price ? rupeesToPaise(v.price) : null,
-              inventory: { create: { availableQty: v.inventoryQty } },
+              inventory: { create: { availableQty: v.inventoryQty, lowStockThreshold: lowStockDefault } },
             })),
           },
         },
@@ -386,6 +390,10 @@ adminRouter.post(
   async (req, res) => {
     const variant = await prisma.productVariant.findUnique({ where: { sku: req.body.sku }, include: { inventory: true } });
     if (!variant) throw notFound('Variant not found for SKU ' + req.body.sku);
+    const settings = (await getSettings()).inventory;
+    if (settings.adjustmentReasonRequired && !req.body.reason?.trim()) {
+      throw badRequest('A reason is required for every stock adjustment');
+    }
     const newQty = (variant.inventory?.availableQty ?? 0) + req.body.deltaQty;
     if (newQty < 0) throw badRequest('Adjustment would make stock negative');
     const result = await prisma.$transaction(async (tx) => {
@@ -399,6 +407,23 @@ adminRouter.post(
       return inv;
     });
     await audit(req.user!.sub, 'INVENTORY_ADJUSTED', 'Inventory', variant.id, req.body, req.ip);
+    // Post-commit, best-effort low-stock alert email (only when enabled and
+    // the adjusted quantity is at or below the variant's threshold).
+    if (
+      settings.lowStockEmailAlerts &&
+      result.lowStockThreshold !== null &&
+      newQty <= result.lowStockThreshold
+    ) {
+      const notif = (await getSettings()).notifications;
+      const productName =
+        (await prisma.productVariant.findUnique({ where: { id: variant.id }, include: { product: { select: { name: true } } } }))?.product.name ?? '';
+      sendEmailBackground({
+        to: settings.alertRecipientsEmail || notif.businessNotificationEmail,
+        subject: `[KIEN Sports] Low stock: ${variant.sku}`,
+        html: `<p>Stock for <strong>${productName}</strong> (SKU ${variant.sku}) is now ${newQty} units, at or below its low-stock threshold (${result.lowStockThreshold}).</p>`,
+        text: `Stock for ${productName} (SKU ${variant.sku}) is now ${newQty} units, at or below its low-stock threshold (${result.lowStockThreshold}).`,
+      });
+    }
     res.json({ data: { sku: req.body.sku, availableQty: result.availableQty } });
   },
 );
@@ -508,6 +533,9 @@ adminRouter.post(
             data: { variantId: item.variantId, deltaQty: item.quantity, type: 'RELEASE', reference: o.orderNumber, actorId: req.user!.sub },
           });
         }
+        // Cancellation also releases any coupon redemption reserved by this
+        // order so the coupon's usage count reflects reality.
+        await releaseCouponRedemptionInTx(tx, order.id, 'Order cancelled by admin');
       }
       return o;
     });
