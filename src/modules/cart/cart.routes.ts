@@ -43,6 +43,12 @@ cartRouter.post(
     const updated = await addItem(cart.id, req.body.variantId, req.body.quantity);
     setCartCookieIfNeeded(req, res, cart);
     if (!existing) {
+      // Business cart-activity notification is recorded synchronously so the
+      // event is deterministically persisted before the response (a fast
+      // settings read + variant lookup + durable outbox insert). Actual email
+      // delivery remains asynchronous via the outbox processor, so the
+      // customer never waits on email sending. notifyCartAdd never throws and
+      // never affects cart state.
       await notifyCartAdd({
         cartId: cart.id,
         variantId: req.body.variantId,

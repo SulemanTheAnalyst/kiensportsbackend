@@ -4,6 +4,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { env } from './config/env';
 import { apiLimiter, errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { requestTiming } from './middleware/requestTiming';
 import { catalogRouter } from './modules/catalog/catalog.routes';
 import { authRouter } from './modules/auth/auth.routes';
 import { accountRouter } from './modules/account/account.routes';
@@ -55,6 +56,10 @@ export const createApp = (): Express => {
     }),
   );
   app.use(cookieParser());
+
+  // Request-duration logging (see middleware/requestTiming.ts): makes real
+  // warm-path latency visible in the Render logs and exposes cold starts.
+  app.use(requestTiming);
 
   const api = express.Router();
   api.use(apiLimiter(60_000, 300)); // global baseline

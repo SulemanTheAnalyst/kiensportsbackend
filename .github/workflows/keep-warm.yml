@@ -1,0 +1,43 @@
+name: Keep services warm
+
+# Render's free tier spins web services down after ~15 minutes without
+# inbound traffic. Waking a spun-down service takes roughly 10-15 seconds
+# (container boot + Node/Prisma startup + first database connection), which
+# is exactly the delay customers experienced on nearly every action.
+#
+# This workflow pings the KIEN backend health endpoint and the website every
+# 10 minutes - below Render's idle threshold - so the services stay warm
+# without any paid plan or code change. It is free (a few seconds of Actions
+# time per run) and doubles as a real latency probe: each run prints the
+# measured HTTP status and total time, so cold vs warm behaviour is visible
+# in the run logs.
+#
+# NOTE: GitHub only runs `schedule` triggers from the DEFAULT branch, so this
+# workflow takes effect once merged to main. GitHub also disables scheduled
+# workflows after 60 days of repository inactivity; re-enable it from the
+# Actions tab if that happens (the run history will say so).
+
+on:
+  schedule:
+    # Every 10 minutes (UTC), safely under Render's 15-minute idle window.
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping KIEN services
+        run: |
+          set -u
+          echo "Backend health:"
+          curl -sS -o /dev/null --max-time 90 \
+            -w "  status=%{http_code} time_total=%{time_total}s\n" \
+            https://api.kiensports.com/api/v1/health || echo "  backend ping FAILED"
+          echo "Website:"
+          curl -sS -o /dev/null --max-time 90 \
+            -w "  status=%{http_code} time_total=%{time_total}s\n" \
+            https://kiensports.com/ || echo "  website ping FAILED"
