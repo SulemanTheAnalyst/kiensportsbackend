@@ -130,9 +130,9 @@ run('Settings + inventory admin (integration)', () => {
     expect(health.status).toBe(200);
     const d = health.body.data;
     expect(d.database).toBeDefined();
-    expect(d.email.configured).toBeDefined();
-    expect(d.razorpay.configured).toBeDefined();
-    expect(d.storage.configured).toBeDefined();
+    expect(d.email.sendingConfigured).toBeDefined();
+    expect(d.payments.status).toBeDefined();
+    expect(d.productMediaStorage.status).toBeDefined();
     // Backup status must not claim success without evidence.
     expect(d.backups.status).toBe('UNKNOWN');
     // The payload must not contain credential-looking values anywhere.
@@ -146,7 +146,10 @@ run('Settings + inventory admin (integration)', () => {
     const token = await adminToken();
     const history = await request(app).get('/api/v1/admin/settings/notification-history').set('Authorization', 'Bearer ' + token);
     expect(history.status).toBe(200);
-    expect(Array.isArray(history.body.data.events)).toBe(true);
+    // The endpoint returns the rows array directly in `data` (envelope style),
+    // plus pagination + last send/error summary.
+    expect(Array.isArray(history.body.data)).toBe(true);
+    expect(history.body.summary).toBeDefined();
   });
 
   it('validates the test-email recipient and rejects anonymous callers', async () => {
@@ -201,6 +204,12 @@ run('Settings + inventory admin (integration)', () => {
       expect(typeof summary.body.data[key]).toBe('number');
     }
 
+    // The variant was created directly in the database, so seed one movement
+    // through the real adjust endpoint before asserting the history shape.
+    const seed = await request(app).post('/api/v1/admin/inventory/adjust').set('Authorization', 'Bearer ' + token).send({
+      sku: variant.sku, deltaQty: 1, type: 'RESTOCK', reason: 'Seed movement for the shape test',
+    });
+    expect(seed.status).toBe(200);
     // The movements response must include the nested variant shape that the
     // Inventory page dereferences (the original blank-screen bug was this
     // exact contract returning only flattened fields).
