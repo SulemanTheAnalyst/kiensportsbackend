@@ -101,10 +101,13 @@ export const createApp = (): Express => {
     adminNewsletterRouter,
     adminContactRouter,
     adminReportsRouter,
-    adminCatalogRouter,
-    adminCouponRouter,
-    adminSettingsRouter
+    adminCatalogRouter
   );
+  // These routers declare their own sub-path routes ('/', '/:id', ...) and
+  // apply requireAuth + requireRole('ADMIN') internally, so they mount at
+  // their full admin sub-path.
+  api.use('/admin/coupons', adminCouponRouter);
+  api.use('/admin/settings', adminSettingsRouter);
 
   app.use(env.API_BASE_PATH, api);
   app.use(notFoundHandler);
