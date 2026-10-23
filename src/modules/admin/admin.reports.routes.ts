@@ -364,13 +364,21 @@ adminReportsRouter.get('/shipments', async (req, res) => {
 adminReportsRouter.get('/inventory', async (req, res) => {
   const { page, limit, skip } = pageParams(req);
   const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
-  const where: Prisma.ProductVariantWhereInput = search
-    ? { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { product: { name: { contains: search, mode: 'insensitive' } } }] }
-    : {};
+  const lowOnly = req.query.lowStock === 'true';
+  const where: Prisma.ProductVariantWhereInput = {
+    ...(search
+      ? { OR: [{ sku: { contains: search, mode: 'insensitive' } }, { product: { name: { contains: search, mode: 'insensitive' } } }] }
+      : {}),
+    // Optional low-stock-only view for the alert workflow.
+    ...(lowOnly ? { inventory: { availableQty: { lte: prisma.inventory.fields.lowStockThreshold } } } : {}),
+  };
   const [items, total] = await Promise.all([
     prisma.productVariant.findMany({
       where,
-      include: { product: { select: { id: true, name: true, slug: true, status: true } }, inventory: true },
+      include: {
+        product: { select: { id: true, name: true, slug: true, status: true } },
+        inventory: true,
+      },
       orderBy: { sku: 'asc' },
       skip,
       take: limit,
@@ -378,6 +386,30 @@ adminReportsRouter.get('/inventory', async (req, res) => {
     prisma.productVariant.count({ where }),
   ]);
   res.json({ data: items, page, limit, total });
+});
+
+// Overview metrics for the Inventory page header. Inventory VALUE is not
+// reported: the schema has no cost-price data, and retail prices must not be
+// presented as inventory valuation.
+adminReportsRouter.get('/inventory/summary', async (_req, res) => {
+  const [totalItems, agg, lowStock, outOfStock] = await Promise.all([
+    prisma.productVariant.count({ where: { isActive: true } }),
+    prisma.inventory.aggregate({ _sum: { availableQty: true, reservedQty: true, soldQty: true } }),
+    prisma.inventory.count({ where: { availableQty: { lte: prisma.inventory.fields.lowStockThreshold } } }),
+    prisma.inventory.count({ where: { availableQty: 0 } }),
+  ]);
+  res.json({
+    data: {
+      totalItems,
+      totalUnitsInStock: agg._sum.availableQty ?? 0,
+      totalReserved: agg._sum.reservedQty ?? 0,
+      totalSold: agg._sum.soldQty ?? 0,
+      lowStockItems: lowStock,
+      outOfStockItems: outOfStock,
+      // No cost-price column exists: valuation is intentionally omitted.
+      inventoryValue: null,
+    },
+  });
 });
 
 adminReportsRouter.get('/inventory/movements', async (req, res) => {
@@ -397,13 +429,22 @@ adminReportsRouter.get('/inventory/movements', async (req, res) => {
     prisma.inventoryMovement.count({ where }),
   ]);
   // Flatten to the documented response shape (variant at the top level) so
-  // the admin frontend contract is unchanged.
+  // the admin frontend contract is unchanged. The nested `variant` object is
+  // ALSO included: the frontend Inventory page renders m.variant.sku /
+  // m.variant.product.name, and this endpoint previously returned only the
+  // flat fields - causing a TypeError (reading 'sku' of undefined) that
+  // crashed the whole Inventory page to a blank screen. Both shapes are
+  // served for backwards compatibility.
   res.json({
     data: items.map((m) => ({
       id: m.id,
       variantId: m.variantId,
       sku: m.inventory?.variant.sku ?? null,
       product: m.inventory?.variant.product.name ?? null,
+      variant: {
+        sku: m.inventory?.variant.sku ?? null,
+        product: { name: m.inventory?.variant.product.name ?? null },
+      },
       deltaQty: m.deltaQty,
       type: m.type,
       reference: m.reference,

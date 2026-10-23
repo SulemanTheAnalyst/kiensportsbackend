@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { notFound, outOfStock } from '../../lib/errors';
-import { computeTotals, paiseToRupees } from '../../lib/money';
+import { paiseToRupees, FLAT_SHIPPING_PAISE, FREE_SHIPPING_THRESHOLD_PAISE } from '../../lib/money';
 import { ApiError } from '../../lib/errors';
 
 // Validated include + explicit payload type (Prisma's documented pattern).
@@ -94,7 +94,12 @@ export const validateCartForCheckout = async (cart: Cart) => {
 };
 
 // Public shape: prices re-resolved server-side on every read.
-export const serializeCart = (cart: Cart) => {
+// `config` supplies the business-configured shipping rules (Settings);
+// when omitted the environment defaults are used.
+export const serializeCart = (
+  cart: Cart,
+  config?: { flatShippingPaise: number; freeShippingThresholdPaise: number },
+) => {
   const items = cart.items.map((item) => {
     const currentUnitPaise = item.variant.pricePaise ?? item.variant.product.pricePaise;
     // Product media can now include VIDEO rows (mediaType). Cart/checkout
@@ -118,12 +123,20 @@ export const serializeCart = (cart: Cart) => {
       image,
     };
   });
-  const totals = computeTotals(
-    cart.items.map((item) => ({
-      unitPricePaise: item.variant.pricePaise ?? item.variant.product.pricePaise,
-      quantity: item.quantity,
-    })),
+  const subtotalPaise = cart.items.reduce(
+    (acc, item) => acc + (item.variant.pricePaise ?? item.variant.product.pricePaise) * item.quantity,
+    0,
   );
+  const flatShippingPaise = config?.flatShippingPaise ?? FLAT_SHIPPING_PAISE;
+  const freeShippingThresholdPaise = config?.freeShippingThresholdPaise ?? FREE_SHIPPING_THRESHOLD_PAISE;
+  const shipping = subtotalPaise >= freeShippingThresholdPaise ? 0 : flatShippingPaise;
+  const taxPaise = 0;
+  const totals = {
+    subtotalPaise,
+    shippingPaise: shipping,
+    taxPaise,
+    totalPaise: subtotalPaise + shipping + taxPaise,
+  };
   return {
     id: cart.id,
     items,

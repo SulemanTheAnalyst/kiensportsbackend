@@ -4,6 +4,7 @@ import { logger } from '../../lib/logger';
 import { prisma } from '../../lib/prisma';
 import { sendEmail } from '../email/email.service';
 import { escapeHtml } from '../email/email.templates';
+import { getSettings } from '../settings/settings.service';
 
 // Durable business-notification outbox.
 //
@@ -106,6 +107,13 @@ export const recordBusinessEvent = async (
   payload: BusinessEventPayload,
 ): Promise<boolean> => {
   try {
+    // Business-alert toggles (Settings > Notifications) gate which event
+    // types are recorded at all. Customer-facing transactional emails
+    // (order confirmation, shipping, cancellation) are separate and always
+    // sent. A settings read failure must never break the event, so the
+    // check falls back to "record" on error.
+    const toggles = await notificationToggles();
+    if (toggles !== null && toggles[type] === false) return false;
     await prisma.notificationOutbox.create({
       data: { type, dedupeKey, payload: payload as unknown as Prisma.InputJsonValue },
     });
@@ -118,6 +126,25 @@ export const recordBusinessEvent = async (
       'Failed to record business notification (business state unaffected)',
     );
     return false;
+  }
+};
+
+// Maps each business event type to its Settings toggle. Returns null when the
+// settings cannot be read (then events are always recorded).
+const notificationToggles = async (): Promise<Record<string, boolean> | null> => {
+  try {
+    const s = await getSettings();
+    return {
+      ORDER_CREATED: s.newOrderAlerts,
+      PAYMENT_SUCCEEDED: s.paymentSuccessAlerts,
+      PAYMENT_FAILED: s.paymentFailureAlerts,
+      PAYMENT_EXPIRED: s.paymentFailureAlerts,
+      PAYMENT_LATE: s.paymentFailureAlerts,
+      COD_COLLECTED: s.newOrderAlerts,
+      CART_ACTIVITY: s.cartActivityAlerts,
+    };
+  } catch {
+    return null;
   }
 };
 
@@ -217,11 +244,14 @@ export const flushOutbox = async (): Promise<void> => {
     for (const row of rows) {
       try {
         const content = buildContent(row.type as BusinessEventType, (row.payload ?? {}) as BusinessEventPayload);
-        const emailConfigured = Boolean(env.BUSINESS_NOTIFICATION_EMAIL && env.RESEND_API_KEY);
+        // Recipient: the Settings business-notification email takes
+        // precedence over the environment variable (which stays the default).
+        const recipient = (await getSettings()).businessNotificationEmail ?? env.BUSINESS_NOTIFICATION_EMAIL;
+        const emailConfigured = Boolean(recipient && env.RESEND_API_KEY);
         let emailAccepted = false;
         let error: string | null = emailConfigured ? null : 'EMAIL_NOT_CONFIGURED';
         if (emailConfigured) {
-          const result = await sendEmail({ to: env.BUSINESS_NOTIFICATION_EMAIL as string, ...content });
+          const result = await sendEmail({ to: recipient as string, ...content });
           emailAccepted = result.accepted;
           if (!emailAccepted) error = result.error ?? 'EMAIL_REJECTED';
         }

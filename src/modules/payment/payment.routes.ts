@@ -38,6 +38,7 @@ orderRouter.post(
       email: z.string().email().max(254),
       address: addressSchema,
       paymentMethod: z.enum(['CARD', 'UPI', 'COD']),
+      couponCode: z.string().trim().min(2).max(24).optional(),
     }),
   }),
   async (req, res) => {
@@ -49,6 +50,7 @@ orderRouter.post(
       email: req.body.email,
       address: req.body.address,
       method: req.body.paymentMethod,
+      couponCode: req.body.couponCode,
     });
     res.status(201).json({
       data: {

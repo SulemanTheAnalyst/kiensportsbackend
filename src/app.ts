@@ -17,6 +17,9 @@ import { contactRouter, adminContactRouter } from './modules/contact/contact.rou
 import { adminRouter } from './modules/admin/admin.routes';
 import { adminReportsRouter } from './modules/admin/admin.reports.routes';
 import { adminCatalogRouter } from './modules/admin/admin.catalog.routes';
+import { adminCouponsRouter } from './modules/coupons/admin.coupons.routes';
+import { couponRouter } from './modules/coupons/coupon.routes';
+import { adminSettingsRouter } from './modules/settings/admin.settings.routes';
 import { adminImagesRouter } from './modules/admin/admin.images.routes';
 import { imageStorageConfigured } from './modules/admin/image.storage';
 import { resendInboundRouter } from './modules/email/inbound.routes';
@@ -72,6 +75,7 @@ export const createApp = (): Express => {
   api.use('/auth', authRouter);
   api.use('/account', accountRouter);
   api.use('/cart', cartRouter);
+  api.use('/coupons', couponRouter); // public coupon discovery
   api.use(catalogRouter); // /products, /categories, /collections, /search
   api.use(reviewsRouter); // /products/:productId/reviews
   api.use('/orders', orderRouter);
@@ -97,7 +101,9 @@ export const createApp = (): Express => {
     adminNewsletterRouter,
     adminContactRouter,
     adminReportsRouter,
-    adminCatalogRouter
+    adminCatalogRouter,
+    adminCouponsRouter,
+    adminSettingsRouter
   );
 
   app.use(env.API_BASE_PATH, api);

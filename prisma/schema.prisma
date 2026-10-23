@@ -157,6 +157,7 @@ model Product {
   variants   ProductVariant[]
   reviews    Review[]
   wishlistItems WishlistItem[]
+  couponProducts CouponProduct[]
 
   @@index([categoryId])
   @@index([status, isFeatured])
@@ -318,6 +319,12 @@ model Order {
   shipments   Shipment[]
   statusEvents OrderStatusEvent[]
   returnRequests ReturnRequest[]
+  coupon         Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponId       String?
+  couponCode     String?
+  coupon         Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponId       String?
+  couponCode     String?
 
   @@index([userId, createdAt])
   @@index([status])
@@ -552,4 +559,123 @@ model NotificationOutbox {
   sentAt    DateTime?
 
   @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------- business settings
+
+// Singleton business-configuration record (id = 'singleton'), created
+// lazily on first save. Operational values only - credentials stay in
+// environment variables / secret management, never in this table.
+model BusinessSettings {
+  id                 String  @id @default("singleton")
+  // General
+  brandName          String  @default("KIEN Sports")
+  legalName          String?
+  logoUrl            String?
+  supportEmail       String?
+  supportPhone       String?
+  websiteUrl         String  @default("https://kiensports.com")
+  businessAddress    String?
+  currency           String  @default("INR")
+  timezone           String  @default("Asia/Kolkata")
+  taxRegistration    String?
+  // Orders & fulfilment
+  orderConfirmationEmails Boolean @default(true)
+  businessOrderAlerts     Boolean @default(true)
+  preparationTimeDays     Int     @default(1)
+  cancellationPolicyNote  String?
+  dispatchNotifications   Boolean @default(true)
+  returnsProcessingNote   String?
+  // Inventory
+  lowStockThresholdDefault    Int     @default(5)
+  lowStockEmailAlerts          Boolean @default(true)
+  outOfStockPurchaseRestricted Boolean @default(true)
+  adjustmentReasonRequired     Boolean @default(true)
+  lowStockAlertEmails          String  @default("")
+  // Payments & checkout
+  codEnabled                  Boolean @default(true)
+  prepaidEnabled              Boolean @default(true)
+  codMinOrderPaise            Int     @default(0)
+  codMaxOrderPaise            Int     @default(0) // 0 = no cap
+  flatShippingPaise           Int     @default(9900)
+  freeShippingThresholdPaise  Int     @default(200000)
+  paymentFailureAlerts        Boolean @default(true)
+  paymentSuccessAlerts       Boolean @default(true)
+  // Shipping & returns
+  shippingPolicyNote    String  @default("")
+  handlingTimeDays      Int     @default(2)
+  returnWindowDays      Int     @default(7)
+  returnsEnabled        Boolean @default(true)
+  returnRequestAlerts   Boolean @default(true)
+  // Notifications
+  businessNotificationEmail String?
+  newOrderAlerts            Boolean @default(true)
+  contactFormAlerts         Boolean @default(true)
+  cartActivityAlerts        Boolean @default(false)
+  updatedAt            DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- coupons
+
+model Coupon {
+  id             String    @id @default(cuid())
+  code           String    @unique
+  internalName   String
+  publicDescription String?
+  discountType   String // PERCENTAGE | FIXED_AMOUNT | FREE_SHIPPING
+  discountValue  Int // percent points (1-100) or paise (FIXED_AMOUNT)
+  minimumOrderPaise Int    @default(0)
+  maximumDiscountPaise Int?
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  isActive       Boolean   @default(true)
+  isPublic       Boolean   @default(false)
+  promotionalHeadline String?
+  campaignBadge  String?
+  displayPriority Int      @default(0)
+  totalUsageLimit Int?
+  perCustomerUsageLimit Int?
+  firstOrderOnly Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  products CouponProduct[]
+  usages   CouponUsage[]
+  orders   Order[]
+
+  @@index([isActive, isPublic])
+}
+
+model CouponProduct {
+  couponId  String
+  productId String
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, productId])
+  @@index([productId])
+}
+
+// One row per order that used a coupon (UNIQUE orderId => exactly-once
+// redemption). status: ACTIVE while the order holds the coupon reservation;
+// RELEASED when the payment failed, the attempt expired or the order was
+// cancelled - released rows stay for reporting.
+model CouponUsage {
+  id            String   @id @default(cuid())
+  couponId      String
+  orderId       String   @unique
+  userId        String?
+  email         String
+  discountPaise Int
+  status        String   @default("ACTIVE")
+  releaseReason String?
+  releasedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([couponId, status])
+  @@index([userId])
 }

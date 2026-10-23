@@ -10,6 +10,7 @@ import { audit } from '../../lib/audit';
 import { notifyOrderCancelled, notifyOrderConfirmed, notifyOrderShipped } from '../email/order.emails';
 import { destroyImage } from './image.storage';
 import { env } from '../../config/env';
+import { releaseCouponUsage } from '../coupons/coupon.service';
 import { expireStalePendingPayments } from '../order/order.service';
 import { recordBusinessEvent, orderNotificationPayload } from '../notifications/notifications';
 
@@ -495,6 +496,8 @@ adminRouter.post(
       });
       // Cancellation releases reserved/sold stock.
       if (to === 'CANCELLED') {
+        // The coupon reservation is released too (kept for reporting).
+        await releaseCouponUsage(tx, order.id, 'Order cancelled by admin');
         const paid = o.paymentStatus === 'PAID';
         for (const item of order.items) {
           if (!item.variantId) continue;

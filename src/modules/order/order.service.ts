@@ -1,7 +1,7 @@
 import { OrderStatus, PaymentMethod, PaymentStatus, Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
 import { notFound, forbidden, ApiError, badRequest } from '../../lib/errors';
-import { computeTotals, paiseToRupees, rupeesToPaise } from '../../lib/money';
+import { paiseToRupees } from '../../lib/money';
 import { env } from '../../config/env';
 import { recordBusinessEvent, orderNotificationPayload } from '../notifications/notifications';
 import { generateOrderNumber } from '../../lib/ids';
@@ -10,6 +10,10 @@ import { validateCartForCheckout } from '../cart/cart.service';
 import type { Request } from 'express';
 import { paymentService } from '../payment/payment.service';
 import { notifyOrderConfirmed } from '../email/order.emails';
+
+import { getSettings } from '../settings/settings.service';
+import { validateCoupon, releaseCouponUsage, normalizeCouponCode } from '../coupons/coupon.service';
+import type { CartLine } from '../coupons/coupon.service';
 
 const orderInclude = {
   items: true,
@@ -36,7 +40,7 @@ export interface AddressInput {
 // 4. create the provider payment session
 export const createOrder = async (
   req: Request,
-  input: { email: string; address: AddressInput; method: PaymentMethod },
+  input: { email: string; address: AddressInput; method: PaymentMethod; couponCode?: string },
 ) => {
   const cart = await getOrCreateCart(req);
   if (cart.items.length === 0) throw new ApiError(400, 'CART_EMPTY', 'Your bag is empty');
@@ -44,6 +48,11 @@ export const createOrder = async (
   await validateCartForCheckout(cart);
 
   const email = input.email.toLowerCase();
+  // Business configuration (cached read) is resolved BEFORE the transaction
+  // so the DB lock is held for the shortest possible time. Shipping, COD
+  // eligibility and coupon rules are all backend-enforced from here on -
+  // the client never supplies an amount.
+  const settings = await getSettings();
   const created = await prisma.$transaction(async (tx) => {
     // Lock inventory rows to prevent overselling under concurrency.
     const variantIds = cart.items.map((i) => i.variantId);
@@ -77,12 +86,57 @@ export const createOrder = async (
         lineTotalPaise: unitPricePaise * item.quantity,
       };
     });
-    const totals = computeTotals(lines.map((l) => ({ unitPricePaise: l.unitPricePaise, quantity: l.quantity })));
+    const subtotalPaise = lines.reduce((acc, l) => acc + l.lineTotalPaise, 0);
 
-    // COD eligibility is validated on the backend before anything is written.
+    // ---- Coupon (backend-authoritative) ----
+    // The coupon row is locked FOR UPDATE before validation, so concurrent
+    // checkouts serialise and usage limits can never be exceeded. The usage
+    // row itself is created below, after the order id exists - all inside
+    // this same transaction, under the lock.
+    let couponApplied: Awaited<ReturnType<typeof validateCoupon>> | null = null;
+    if (input.couponCode) {
+      const code = normalizeCouponCode(input.couponCode);
+      await tx.$queryRaw`SELECT id FROM "Coupon" WHERE code = ${code} FOR UPDATE`;
+      couponApplied = await validateCoupon(tx, {
+        code,
+        subtotalPaise,
+        cartLines: cart.items.map(
+          (item): CartLine => ({
+            variantId: item.variantId,
+            productId: item.variant.productId,
+            quantity: item.quantity,
+            unitPricePaise: item.variant.pricePaise ?? item.variant.product.pricePaise,
+          }),
+        ),
+        userId: req.user?.sub ?? null,
+        email,
+      });
+    }
+
+    // ---- Shipping (from the configured business settings) ----
+    const shippingPaise = couponApplied?.freeShipping
+      ? 0
+      : subtotalPaise >= settings.freeShippingThresholdPaise
+        ? 0
+        : settings.flatShippingPaise;
+    // DTC intra-state GST can be added here later; kept 0 for launch.
+    const taxPaise = 0;
+    const discountPaise = couponApplied?.discountPaise ?? 0;
+    const totalPaise = subtotalPaise - discountPaise + shippingPaise + taxPaise;
+
+    // COD / prepaid availability and value limits are backend-enforced.
     const isCod = input.method === PaymentMethod.COD;
-    if (isCod && env.COD_MAX_ORDER_VALUE_RUPEES > 0 && totals.totalPaise > rupeesToPaise(env.COD_MAX_ORDER_VALUE_RUPEES)) {
-      throw badRequest('Cash on delivery is not available for orders above ₹' + env.COD_MAX_ORDER_VALUE_RUPEES);
+    if (isCod && !settings.codEnabled) {
+      throw badRequest('Cash on delivery is currently unavailable.');
+    }
+    if (!isCod && !settings.prepaidEnabled) {
+      throw badRequest('Online payment is currently unavailable.');
+    }
+    if (isCod && settings.codMinOrderPaise > 0 && subtotalPaise < settings.codMinOrderPaise) {
+      throw badRequest('Cash on delivery is available on orders above ₹' + Math.ceil(settings.codMinOrderPaise / 100) + '.');
+    }
+    if (isCod && settings.codMaxOrderPaise > 0 && totalPaise > settings.codMaxOrderPaise) {
+      throw badRequest('Cash on delivery is not available for orders above ₹' + Math.floor(settings.codMaxOrderPaise / 100) + '.');
     }
 
     // A COD checkout is a valid business order immediately: CONFIRMED with a
@@ -98,10 +152,13 @@ export const createOrder = async (
         status: isCod ? OrderStatus.CONFIRMED : undefined,
         paymentStatus: isCod ? PaymentStatus.COD_PENDING : undefined,
         placedAt: isCod ? new Date() : undefined,
-        subtotalPaise: totals.subtotalPaise,
-        shippingPaise: totals.shippingPaise,
-        taxPaise: totals.taxPaise,
-        totalPaise: totals.totalPaise,
+        subtotalPaise,
+        discountPaise,
+        shippingPaise,
+        taxPaise,
+        totalPaise,
+        couponId: couponApplied?.coupon.id ?? null,
+        couponCode: couponApplied ? couponApplied.coupon.code : null,
         shippingAddress: input.address as unknown as Prisma.InputJsonValue,
         items: { create: lines.map(({ variantId, ...rest }) => ({ ...rest, variant: { connect: { id: variantId } } })) },
         statusEvents: {
@@ -142,9 +199,25 @@ export const createOrder = async (
         orderId: created.id,
         provider: paymentService.providerName(),
         method: input.method,
-        amountPaise: totals.totalPaise,
+        amountPaise: totalPaise,
       },
     });
+
+    // Consume the coupon reservation (exactly-once per order, unique orderId).
+    // Pending prepaid attempts hold the reservation; it is RELEASED when the
+    // payment fails, the attempt expires or the order is cancelled.
+    if (couponApplied) {
+      await tx.couponUsage.create({
+        data: {
+          couponId: couponApplied.coupon.id,
+          orderId: created.id,
+          userId: req.user?.sub ?? null,
+          email,
+          discountPaise: couponApplied.discountPaise,
+          status: 'ACTIVE',
+        },
+      });
+    }
 
     // Mark cart converted; checkout complete.
     await tx.cart.update({ where: { id: cart.id }, data: { status: 'CONVERTED' } });
@@ -179,6 +252,8 @@ export const serializeOrder = (order: Prisma.OrderGetPayload<{ include: typeof o
     status: order.status,
     paymentStatus: order.paymentStatus,
     subtotal: paiseToRupees(order.subtotalPaise),
+    discount: paiseToRupees(order.discountPaise),
+    couponCode: order.couponCode,
     shipping: paiseToRupees(order.shippingPaise),
     tax: paiseToRupees(order.taxPaise),
     total: paiseToRupees(order.totalPaise),
@@ -362,6 +437,8 @@ export const failOrderPayment = async (orderId: string, reason = 'Payment failed
     transitioned = true;
     await tx.order.update({ where: { id: orderId }, data: { status: OrderStatus.CANCELLED, paymentStatus: PaymentStatus.FAILED } });
     await tx.orderStatusEvent.create({ data: { orderId, fromStatus: 'PENDING_PAYMENT', toStatus: 'CANCELLED', note: reason } });
+    // Release the coupon reservation so the customer can retry with it.
+    await releaseCouponUsage(tx, orderId, reason);
     for (const item of fresh.items) {
       if (!item.variantId) continue;
       await tx.inventory.update({
@@ -409,6 +486,8 @@ const expireOrderInTx = async (
         note: 'Payment attempt expired (TTL ' + env.PENDING_PAYMENT_TTL_MINUTES + ' minutes)',
       },
     });
+    // Release the coupon reservation held by the abandoned attempt.
+    await releaseCouponUsage(tx, order.id, 'Payment attempt expired');
     for (const item of order.items) {
       if (!item.variantId) continue;
       await tx.inventory.update({
