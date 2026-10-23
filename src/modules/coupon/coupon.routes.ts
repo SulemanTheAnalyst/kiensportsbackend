@@ -7,7 +7,7 @@ import { apiLimiter } from '../../middleware/errorHandler';
 import { ApiError, badRequest } from '../../lib/errors';
 import { paiseToRupees } from '../../lib/money';
 import { getOrCreateCart } from '../cart/cart.session';
-import { getShippingRule, getSettings } from '../settings/settings.service';
+import { getShippingRule } from '../settings/settings.service';
 import {
   checkCustomerEligibility,
   evaluateCoupon,
@@ -84,7 +84,7 @@ couponRouter.post(
     }));
     const subtotalPaise = lines.reduce((a, l) => a + l.unitPricePaise * l.quantity, 0);
 
-    const evaluation = evaluateCoupon(coupon.id, { items: lines }, { userId: req.user?.sub ?? null, email: '' }, shippingRule);
+    const evaluation = await evaluateCoupon(coupon.id, { items: lines }, { userId: req.user?.sub ?? null, email: '' }, shippingRule);
     if (!evaluation.ok) throw evaluationToApiError(evaluation);
 
     // Customer eligibility needs the email; guests only get order-history

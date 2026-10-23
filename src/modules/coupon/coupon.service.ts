@@ -301,4 +301,6 @@ export const toPublicCoupon = (
 // Throw helper: converts an evaluation failure into an ApiError with the
 // same machine-readable code, so the API can return consistent envelopes.
 export const evaluationToApiError = (evaluation: CouponEvaluation): ApiError =>
-  new ApiError(400, evaluation.code, evaluation.message);
+  evaluation.ok
+    ? new ApiError(500, 'COUPON_ERROR', 'Coupon evaluation failed unexpectedly.')
+    : new ApiError(400, evaluation.code, evaluation.message);
