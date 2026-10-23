@@ -43,7 +43,12 @@ cartRouter.post(
     const updated = await addItem(cart.id, req.body.variantId, req.body.quantity);
     setCartCookieIfNeeded(req, res, cart);
     if (!existing) {
-      await notifyCartAdd({
+      // Business cart-activity notification is recorded out-of-band: the
+      // event and its delivery go through the durable outbox and must not
+      // add latency (settings read + variant lookup + insert) to the
+      // customer's add-to-cart response. notifyCartAdd never throws and
+      // never affects cart state, so the response does not wait on it.
+      void notifyCartAdd({
         cartId: cart.id,
         variantId: req.body.variantId,
         quantity: req.body.quantity,
