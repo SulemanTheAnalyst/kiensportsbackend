@@ -182,8 +182,8 @@ export const getSettings = async (): Promise<BusinessSettings> => {
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
   const settings = {} as BusinessSettings;
   for (const section of SETTINGS_SECTIONS) {
-    (settings as Record<string, unknown>)[section] = mergeSection(
-      DEFAULT_SETTINGS[section] as Record<string, unknown>,
+    (settings as unknown as Record<string, unknown>)[section] = mergeSection(
+      DEFAULT_SETTINGS[section] as unknown as Record<string, unknown>,
       byKey.get(section),
     );
   }

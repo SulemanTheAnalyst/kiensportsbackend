@@ -8,7 +8,6 @@ import { badRequest } from '../../lib/errors';
 import { audit } from '../../lib/audit';
 import { emailStatus } from '../email/email.config';
 import { sendEmail } from '../email/email.service';
-import { imageStorageConfigured } from './image.storage';
 import { env, isProd } from '../../config/env';
 import {
   getSettings,
@@ -127,7 +126,7 @@ adminSettingsRouter.patch('/', validate({ body: settingsPatchSchema }), async (r
     if (patch && typeof patch === 'object') {
       // Merge over the current stored value so partial updates keep the rest.
       const current = await getSettings();
-      sections[section] = { ...(current[section] as Record<string, unknown>), ...(patch as Record<string, unknown>) };
+      sections[section] = { ...(current[section] as unknown as Record<string, unknown>), ...(patch as Record<string, unknown>) };
     }
   }
   if (Object.keys(sections).length === 0) throw badRequest('No valid settings section supplied');
@@ -189,7 +188,10 @@ adminSettingsRouter.get('/system-health', async (_req, res) => {
                 ? 'ERROR'
                 : 'CONFIGURATION_REQUIRED',
       },
-      productMediaStorage: { status: imageStorageConfigured() ? 'CONNECTED' : 'CONFIGURATION_REQUIRED' },
+      productMediaStorage: {
+        status: 'NOT_CONFIGURED',
+        note: 'Product media are managed as external URLs (Media Manager); no backend storage integration exists yet.',
+      },
       shippingProvider: { status: 'NOT_CONFIGURED', note: 'Carrier integration (tracking) is data-driven; no provider is connected yet.' },
       backups: { status: 'UNKNOWN', note: 'No backup monitoring is configured yet - verify Neon backups in the provider console.' },
       businessNotificationEmail: {

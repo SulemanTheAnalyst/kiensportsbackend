@@ -11,6 +11,7 @@ import { getShippingRule } from '../settings/settings.service';
 import {
   checkCustomerEligibility,
   evaluateCoupon,
+  type CouponEvaluation,
   findCouponByCode,
   toPublicCoupon,
   totalsWithCoupon,
@@ -127,5 +128,7 @@ couponRouter.post(
   },
 );
 
-const evaluationToApiError = (evaluation: { code: string; message: string }): ApiError =>
-  new ApiError(400, evaluation.code, evaluation.message);
+const evaluationToApiError = (evaluation: CouponEvaluation): ApiError =>
+  evaluation.ok
+    ? new ApiError(500, 'COUPON_ERROR', 'Coupon evaluation failed unexpectedly.')
+    : new ApiError(400, evaluation.code, evaluation.message);
