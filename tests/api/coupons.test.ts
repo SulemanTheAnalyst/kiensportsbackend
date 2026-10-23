@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { createHmac } from 'crypto';
 import bcrypt from 'bcryptjs';
+import * as authService from '../../src/modules/auth/auth.service';
 import type { Express } from 'express';
 
 // Integration tests for the coupon system. Requires a running, migrated
@@ -68,38 +69,43 @@ run('Coupons (integration)', () => {
     return { product, variant };
   };
 
-  const registerCustomer = async () => {
+  // Test users are created directly in the database and tokens are minted via
+  // the auth service: the register/login endpoints are rate limited per IP
+  // (10 per 10 minutes / 10 per hour) which this suite would exhaust. Tokens
+  // are the same JWTs the API issues and every request still goes through the
+  // real middleware stack, so no production behaviour is bypassed.
+  const makeUser = async (opts: { prefix: string; role: 'CUSTOMER' | 'ADMIN' }) => {
     const stamp = uniq();
-    const email = 'cust-' + stamp + '@example.com';
-    const reg = await request(app).post('/api/v1/auth/register').send({
-      email, password: 'Password123', firstName: 'Cust', lastName: 'Test',
-    });
-    expect(reg.status).toBe(201);
-    const user = await prisma.user.findUnique({ where: { email } });
-    created.userIds.push(user.id);
-    return { email, token: reg.body.data.accessToken as string };
-  };
-
-  const adminToken = async () => {
-    const stamp = uniq();
-    const email = 'admin-' + stamp + '@example.com';
-    const password = 'Password12345';
+    const email = opts.prefix + '-' + stamp + '@example.com';
     const user = await prisma.user.create({
       data: {
-        email, passwordHash: await bcrypt.hash(password, 4),
-        firstName: 'Admin', lastName: 'Test', emailVerifiedAt: new Date(),
-        roles: { create: { role: { connect: { name: 'ADMIN' } } } },
+        email,
+        passwordHash: await bcrypt.hash('Password12345', 4),
+        firstName: 'Test', lastName: 'User', emailVerifiedAt: new Date(),
+        roles: { create: { role: { connectOrCreate: { where: { name: opts.role }, create: { name: opts.role } } } } },
       },
     });
     created.userIds.push(user.id);
-    const login = await request(app).post('/api/v1/auth/login').send({ email, password });
-    expect(login.status).toBe(200);
-    return login.body.data.accessToken as string;
+    const tokens = await authService.issueTokens(user.id, [opts.role]);
+    return { email, token: tokens.accessToken as string };
   };
 
+  const registerCustomer = () => makeUser({ prefix: 'cust', role: 'CUSTOMER' });
+
+  // A single admin identity is shared by the whole file.
+  let adminJwt = '';
+  const adminToken = async () => {
+    if (!adminJwt) adminJwt = (await makeUser({ prefix: 'admin', role: 'ADMIN' })).token;
+    return adminJwt;
+  };
+
+  // Cart adds must share the cart cookie with the later validate call, so the
+  // helper returns the cookie-bearing agent.
   const addToCart = async (token: string, variantId: string, quantity = 1) => {
-    const res = await request(app).post('/api/v1/cart/items').set('Authorization', 'Bearer ' + token).send({ variantId, quantity });
+    const agent = request.agent(app);
+    const res = await agent.post('/api/v1/cart/items').set('Authorization', 'Bearer ' + token).send({ variantId, quantity });
     expect(res.status).toBe(201);
+    return agent;
   };
 
   const placeOrder = async (
@@ -219,8 +225,8 @@ run('Coupons (integration)', () => {
     expect(c.status).toBe(201);
 
     const cust = await registerCustomer();
-    await addToCart(cust.token, variant.id);
-    const v = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
+    const bag = await addToCart(cust.token, variant.id);
+    const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(200);
     // 10% of 199900 = 19990 paise; subtotal 1999 < 2000 free-shipping
     // threshold, so shipping stays 99 rupees.
@@ -237,8 +243,8 @@ run('Coupons (integration)', () => {
     const c = await createCoupon(token, { discount: { discountType: 'PERCENT', discountValue: 15 }, maximumDiscountRupees: 200, minimumOrderRupees: 1999 });
     expect(c.status).toBe(201);
     const cust = await registerCustomer();
-    await addToCart(cust.token, variant.id);
-    const v = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
+    const bag = await addToCart(cust.token, variant.id);
+    const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(200);
     expect(v.body.data.discount).toBe(200); // uncapped would be 299.85 -> capped 200
     expect(v.body.data.total).toBe(1898);
@@ -250,8 +256,8 @@ run('Coupons (integration)', () => {
     const c = await createCoupon(token, { discount: { discountType: 'FIXED', discountValue: 200 }, minimumOrderRupees: 1499 });
     expect(c.status).toBe(201);
     const cust = await registerCustomer();
-    await addToCart(cust.token, variant.id);
-    const v = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
+    const bag = await addToCart(cust.token, variant.id);
+    const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(200);
     expect(v.body.data.discount).toBe(200);
     expect(v.body.data.total).toBe(1898);
@@ -263,8 +269,8 @@ run('Coupons (integration)', () => {
     const c = await createCoupon(token, { minimumOrderRupees: 1499 });
     expect(c.status).toBe(201);
     const cust = await registerCustomer();
-    await addToCart(cust.token, variant.id);
-    const v = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
+    const bag = await addToCart(cust.token, variant.id);
+    const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(400);
     expect(v.body.error.code).toBe('MIN_ORDER_NOT_MET');
   });
@@ -280,18 +286,18 @@ run('Coupons (integration)', () => {
     expect(disabled.status).toBe(201);
 
     const cust = await registerCustomer();
-    await addToCart(cust.token, variant.id);
-    const e1 = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: expired.body.data.code });
+    const bag = await addToCart(cust.token, variant.id);
+    const e1 = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: expired.body.data.code });
     expect(e1.status).toBe(400);
     expect(e1.body.error.code).toBe('COUPON_EXPIRED');
-    const e2 = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: scheduled.body.data.code });
+    const e2 = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: scheduled.body.data.code });
     expect(e2.status).toBe(400);
     expect(e2.body.error.code).toBe('COUPON_NOT_STARTED');
-    const e3 = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: disabled.body.data.code });
+    const e3 = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: disabled.body.data.code });
     expect(e3.status).toBe(400);
     expect(e3.body.error.code).toBe('COUPON_INACTIVE');
 
-    const unknown = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: 'NOPE' + uniq().slice(-6) });
+    const unknown = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: 'NOPE' + uniq().slice(-6) });
     expect(unknown.status).toBe(400);
   });
 
@@ -304,8 +310,8 @@ run('Coupons (integration)', () => {
 
     // Cart with only the ineligible product.
     const cust = await registerCustomer();
-    await addToCart(cust.token, b.variant.id);
-    const wrong = await request(app).post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
+    const bag = await addToCart(cust.token, b.variant.id);
+    const wrong = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(wrong.status).toBe(400);
     expect(wrong.body.error.code).toBe('COUPON_NOT_APPLICABLE');
 
@@ -508,6 +514,7 @@ run('Coupons (integration)', () => {
     const usage = await request(app).get('/api/v1/admin/coupons/' + c.body.data.id + '/usage').set('Authorization', 'Bearer ' + token);
     expect(usage.status).toBe(200);
     expect(usage.body.data.length).toBeGreaterThanOrEqual(1);
+    // Usage rows are addressed by order number and expose whole-rupee amounts.
     const entry = usage.body.data.find((u: { orderNumber: string }) => u.orderNumber === order.orderNumber);
     expect(entry).toBeDefined();
     expect(entry.status).toBe('REDEEMED');
