@@ -30,7 +30,14 @@ const discountBody = z
   });
 
 const couponCreateSchema = z.object({
-  code: z.string().min(2).max(40).regex(/^[A-Za-z0-9_-]+$/, 'Letters, numbers, - and _ only'),
+  // Normalise (trim + uppercase) BEFORE validating the character set, so
+  // administrators can paste codes with stray whitespace.
+  code: z
+    .string()
+    .min(2)
+    .max(60)
+    .transform(normalizeCode)
+    .refine((v) => /^[A-Za-z0-9_-]+$/.test(v), 'Letters, numbers, - and _ only'),
   internalName: z.string().min(2).max(120),
   publicDescription: z.string().max(500).optional().nullable(),
   discount: discountBody,
