@@ -50,6 +50,18 @@ const envSchema = z.object({
   WHATSAPP_TOKEN: z.string().optional().default(''),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(''),
   WHATSAPP_RECIPIENT: z.string().optional().default(''),
+  // ---- Shiprocket API ----
+  SHIPROCKET_ENABLED: z.enum(['true', 'false']).default('false'),
+  SHIPROCKET_EMAIL: z.string().optional().default(''),
+  SHIPROCKET_PASSWORD: z.string().optional().default(''),
+  SHIPROCKET_PICKUP_LOCATION: z.string().optional().default(''),
+  SHIPROCKET_WEBHOOK_TOKEN: z.string().optional().default(''),
+
+  SHIPROCKET_PICKUP_PINCODE: z.string().default('800006'),
+  SHIPROCKET_PACKAGE_WEIGHT: z.coerce.number().positive().default(0.5),
+  SHIPROCKET_PACKAGE_LENGTH: z.coerce.number().positive().default(20),
+  SHIPROCKET_PACKAGE_BREADTH: z.coerce.number().positive().default(13.5),
+  SHIPROCKET_PACKAGE_HEIGHT: z.coerce.number().positive().default(20),
 });
 
 const parsed = envSchema.safeParse(process.env);

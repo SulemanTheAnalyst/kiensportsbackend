@@ -21,8 +21,8 @@ export interface ShippingRule {
 }
 
 export const DEFAULT_SHIPPING_RULE: ShippingRule = {
-  flatShippingPaise: 9900,
-  freeShippingThresholdPaise: 200000,
+  flatShippingPaise: 12900,
+  freeShippingThresholdPaise: 199900,
 };
 
 // Shipping is evaluated on the PRE-DISCOUNT merchandise subtotal (the same

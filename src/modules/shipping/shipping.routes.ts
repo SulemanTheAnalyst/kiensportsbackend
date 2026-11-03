@@ -5,6 +5,8 @@ import { notFound } from '../../lib/errors';
 import { validate } from '../../middleware/validate';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { notifyOrderShipped } from '../email/order.emails';
+import { env } from '../../config/env';
+import { checkShiprocketServiceability } from './shiprocket.client';
 
 // Shipping is stored as data; carrier integration is a future provider
 // implementation (Shiprocket/Delhivery/etc.) and plugs into Shipment records.
@@ -82,5 +84,44 @@ adminShippingRouter.patch(
       notifyOrderShipped(shipment.order.orderNumber);
     }
     res.json({ data: updated });
+  },
+);
+
+// Check Shiprocket courier availability and rates.
+adminShippingRouter.get(
+  '/shipping/serviceability',
+  validate({
+    query: z.object({
+      deliveryPincode: z.string().regex(/^\d{6}$/, 'Enter a valid 6-digit delivery PIN code'),
+      cod: z.enum(['true', 'false']).default('false'),
+    }),
+  }),
+  async (req: Request, res: Response) => {
+    if (env.SHIPROCKET_ENABLED !== 'true') {
+      return res.status(503).json({
+        message: 'Shiprocket integration is currently disabled.',
+      });
+    }
+
+    const { deliveryPincode, cod } = req.query as {
+      deliveryPincode: string;
+      cod: 'true' | 'false';
+    };
+
+    const result = await checkShiprocketServiceability({
+      deliveryPincode,
+      cod: cod === 'true',
+    });
+
+    res.json({
+      data: result,
+      package: {
+        weightKg: env.SHIPROCKET_PACKAGE_WEIGHT,
+        lengthCm: env.SHIPROCKET_PACKAGE_LENGTH,
+        breadthCm: env.SHIPROCKET_PACKAGE_BREADTH,
+        heightCm: env.SHIPROCKET_PACKAGE_HEIGHT,
+        provisional: true,
+      },
+    });
   },
 );
