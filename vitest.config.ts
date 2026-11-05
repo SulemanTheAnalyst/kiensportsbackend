@@ -5,9 +5,7 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     globals: false,
-    // The integration suites share one test database and create real
-    // products/orders. Running test files in parallel makes exact-count
-    // catalog assertions racy, so execute files sequentially.
+    setupFiles: ['./tests/setup.ts'],
     fileParallelism: false,
   },
 });

@@ -4,7 +4,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // unconfigured. The Resend SDK is mocked - no network, no real emails.
 
 process.env.NODE_ENV = 'test';
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://kien:kien@localhost:5432/kiensports';
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'unit-test-access-secret';
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'unit-test-refresh-secret';
 process.env.PAYMENT_PROVIDER = 'mock';
@@ -31,7 +30,7 @@ describe('email service', () => {
   });
 
   it('reports not-configured instead of throwing when RESEND_API_KEY is unset', async () => {
-    delete process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = '';
     const { sendEmail } = await import('../../src/modules/email/email.service');
     const result = await sendEmail({ to: 'customer@example.com', subject: 'Hi', html: '<p>Hi</p>', text: 'Hi' });
     expect(result.accepted).toBe(false);

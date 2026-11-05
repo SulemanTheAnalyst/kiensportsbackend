@@ -22,7 +22,7 @@ import bcrypt from 'bcryptjs';
 // - storefront compatibility: GET /products/:slug returns images (IMAGE only)
 //   plus a videos array; legacy IMAGE rows are unchanged
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -139,19 +139,42 @@ run('admin product media (images + videos)', () => {
   });
 
   it('503 names the missing environment variables (names only) when unconfigured', async () => {
-    const res = await request(app)
-      .post('/api/v1/admin/media')
-      .set('Authorization', 'Bearer ' + adminToken)
-      .set('Content-Type', 'application/octet-stream')
-      .send(PNG);
-    expect(res.status).toBe(503);
-    expect(res.body.error.code).toBe('STORAGE_NOT_CONFIGURED');
-    expect(Array.isArray(res.body.error.missingVariables)).toBe(true);
-    expect(res.body.error.missingVariables).toContain('CLOUDINARY_CLOUD_NAME');
-    expect(res.body.error.missingVariables).toContain('CLOUDINARY_API_KEY');
-    expect(res.body.error.missingVariables).toContain('CLOUDINARY_API_SECRET');
-    // Never a secret value in the response body.
-    expect(JSON.stringify(res.body)).not.toMatch(/test-secret/);
+    const names = [
+      'CLOUDINARY_CLOUD_NAME',
+      'CLOUDINARY_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ] as const;
+
+    const saved = Object.fromEntries(
+      names.map((name) => [name, process.env[name]]),
+    );
+
+    try {
+      for (const name of names) {
+        delete process.env[name];
+      }
+
+      const res = await request(app)
+        .post('/api/v1/admin/media')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .set('Content-Type', 'application/octet-stream')
+        .send(PNG);
+
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe('STORAGE_NOT_CONFIGURED');
+      expect(Array.isArray(res.body.error.missingVariables)).toBe(true);
+
+      for (const name of names) {
+        expect(res.body.error.missingVariables).toContain(name);
+      }
+
+      expect(JSON.stringify(res.body)).not.toMatch(/test-secret/);
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it('400 for an unsupported media type', async () => {

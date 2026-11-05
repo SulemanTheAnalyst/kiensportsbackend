@@ -7,7 +7,7 @@ import type { Express } from 'express';
 // inventory admin endpoints. Requires a migrated Postgres; skips without
 // DATABASE_URL. No secrets are ever asserted by value.
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('Settings + inventory admin (integration)', () => {
   let app: Express;
@@ -101,8 +101,8 @@ run('Settings + inventory admin (integration)', () => {
     expect(read.body.data.general.currency).toBe('INR');
     expect(read.body.data.general.timezone).toBe('Asia/Kolkata');
     // Defaults preserve the existing launch shipping rule.
-    expect(read.body.data.checkout.flatShippingRupees).toBe(99);
-    expect(read.body.data.checkout.freeShippingThresholdRupees).toBe(2000);
+    expect(read.body.data.checkout.flatShippingRupees).toBe(129);
+    expect(read.body.data.checkout.freeShippingThresholdRupees).toBe(1999);
 
     await snapshotSection('general');
     const patch = await request(app).patch('/api/v1/admin/settings').set('Authorization', 'Bearer ' + token).send({

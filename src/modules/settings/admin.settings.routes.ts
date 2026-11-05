@@ -15,6 +15,10 @@ import {
   SETTINGS_SECTIONS,
   type SettingsSection,
 } from '../settings/settings.service';
+import {
+  imageStorageConfigured,
+  missingCloudinaryVars,
+} from '../admin/image.storage';
 
 // Admin Settings: backend-managed business configuration.
 //  - GET    /settings            -> all sections (typed, safe fields only)
@@ -158,45 +162,209 @@ adminSettingsRouter.post(
 // evidence (there is no backup monitor yet, so it reports UNKNOWN).
 adminSettingsRouter.get('/system-health', async (_req, res) => {
   const email = emailStatus();
-  const settings = await getSettings();
-  let dbConnected = false;
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    dbConnected = true;
-  } catch {
-    dbConnected = false;
-  }
+
+  // The outer timeout is a fallback, not cancellation.
+  // Database transactions have their own shorter limits.
+  const run = <T>(
+    check: () => T | Promise<T>,
+    fallback: T,
+    timeoutMs = 3000,
+  ): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const fallbackAfterTimeout = new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), timeoutMs);
+    });
+
+    return Promise.race([
+      Promise.resolve().then(check).catch(() => fallback),
+      fallbackAfterTimeout,
+    ]).finally(() => clearTimeout(timer));
+  };
+
+  // All database checks are independent and execute concurrently.
+  // Each transaction has its own bounded acquisition and execution time.
+  const [dbConnected, notificationSettings, outboxResult] = await Promise.all([
+    run(
+      () =>
+        prisma.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`SELECT 1`;
+            return true;
+          },
+          { timeout: 2000, maxWait: 500 },
+        ),
+      false,
+    ),
+
+    run(
+      () =>
+        prisma.$transaction(
+          async (tx) => {
+            const row = await tx.businessSetting.findUnique({
+              where: { key: 'notifications' },
+              select: { value: true },
+            });
+
+            const stored = row?.value as
+              | { businessNotificationEmail?: unknown }
+              | undefined;
+
+            const value =
+              typeof stored?.businessNotificationEmail === 'string'
+                ? stored.businessNotificationEmail.trim()
+                : '';
+
+            return {
+              available: true,
+              email: value || null,
+            };
+          },
+          { timeout: 2000, maxWait: 500 },
+        ),
+      {
+        available: false,
+        email: null,
+      },
+    ),
+
+    run(
+      () =>
+        prisma.$transaction(
+          async (tx) => {
+            const last = await tx.notificationOutbox.findFirst({
+              where: { status: 'SENT' },
+              orderBy: { sentAt: 'desc' },
+              select: { sentAt: true },
+            });
+
+            return {
+              available: true,
+              lastSentAt: last?.sentAt ?? null,
+            };
+          },
+          { timeout: 2000, maxWait: 500 },
+        ),
+      {
+        available: false,
+        lastSentAt: null,
+      },
+    ),
+  ]);
+
+  const lastSentAt = outboxResult.lastSentAt;
+
+  const emailNote = !email.sendingConfigured
+    ? 'No Resend API key is configured.'
+    : lastSentAt
+      ? `Historical delivery recorded at ${lastSentAt.toISOString()}. This does not verify current connectivity.`
+      : outboxResult.available
+        ? 'Configured, but no successful delivery is recorded yet. Send a test email to verify delivery.'
+        : 'Configured, but delivery history could not be checked. Current connectivity is unverified.';
+
+  // Configuration-only check. Never creates shipments, AWBs or pickups.
+  const shiprocketEnabled = env.SHIPROCKET_ENABLED === 'true';
+  const shiprocketCredentialsPresent = Boolean(
+    env.SHIPROCKET_EMAIL && env.SHIPROCKET_PASSWORD,
+  );
+
+  const shippingProvider = !shiprocketEnabled
+    ? {
+        status: 'DISABLED',
+        note: 'Shiprocket is disabled.',
+      }
+    : shiprocketCredentialsPresent
+      ? {
+          status: 'CONFIGURED',
+          note: 'Shiprocket credentials are present. Live connectivity has not been tested.',
+        }
+      : {
+          status: 'CONFIGURATION_REQUIRED',
+          note: 'Shiprocket is enabled but credentials are missing.',
+        };
+
+  // Configuration-only check. No Cloudinary API request is performed.
+  const storageConfigured = imageStorageConfigured();
+  const storageMissing = storageConfigured ? [] : missingCloudinaryVars();
+
+  const productMediaStorage = storageConfigured
+    ? {
+        status: 'CONFIGURED',
+        note: 'Cloudinary credentials are present. Live connectivity is unverified.',
+      }
+    : {
+        status: 'NOT_CONFIGURED',
+        note: storageMissing.length
+          ? `Missing environment variables: ${storageMissing.join(', ')}.`
+          : 'No backend media storage is configured.',
+      };
+
+  const businessNotificationEmail =
+    notificationSettings.email || env.BUSINESS_NOTIFICATION_EMAIL;
+
+  const businessNotificationEmailSource = notificationSettings.email
+    ? 'settings'
+    : notificationSettings.available
+      ? env.BUSINESS_NOTIFICATION_EMAIL
+        ? 'environment'
+        : 'none'
+      : env.BUSINESS_NOTIFICATION_EMAIL
+        ? 'environment (settings unavailable)'
+        : 'none';
+
   res.json({
     data: {
-      api: { status: 'CONNECTED', environment: env.NODE_ENV },
-      database: { status: dbConnected ? 'CONNECTED' : 'ERROR' },
+      api: {
+        status: 'CONNECTED',
+        environment: env.NODE_ENV,
+      },
+
+      database: {
+        status: dbConnected ? 'CONNECTED' : 'ERROR',
+      },
+
       email: {
-        status: email.sendingConfigured ? 'CONNECTED' : 'CONFIGURATION_REQUIRED',
+        status: !email.sendingConfigured
+          ? 'NOT_CONFIGURED'
+          : lastSentAt
+            ? 'HISTORICAL_SUCCESS'
+            : 'CONFIGURED',
         sendingConfigured: email.sendingConfigured,
         inboundConfigured: email.inboundConfigured,
         issues: email.issues,
+        note: emailNote,
+        lastSuccessfulSendAt: lastSentAt,
       },
+
       payments: {
         provider: env.PAYMENT_PROVIDER,
-        // Provider secrets are never exposed - only readiness flags.
         status:
-          env.PAYMENT_PROVIDER === 'razorpay' && env.RAZORPAY_KEY_ID
-            ? 'CONNECTED'
-            : env.PAYMENT_PROVIDER === 'razorpay'
-              ? 'CONFIGURATION_REQUIRED'
-              : isProd
-                ? 'ERROR'
-                : 'CONFIGURATION_REQUIRED',
+          env.PAYMENT_PROVIDER === 'razorpay'
+            ? env.RAZORPAY_KEY_ID && env.RAZORPAY_KEY_SECRET
+              ? 'CONFIGURED'
+              : 'CONFIGURATION_REQUIRED'
+            : isProd
+              ? 'ERROR'
+              : 'NOT_CONFIGURED',
+        note:
+          env.PAYMENT_PROVIDER === 'razorpay' &&
+          env.RAZORPAY_KEY_ID &&
+          env.RAZORPAY_KEY_SECRET
+            ? 'Razorpay credentials are present. Live connectivity is unverified.'
+            : undefined,
       },
-      productMediaStorage: {
-        status: 'NOT_CONFIGURED',
-        note: 'Product media are managed as external URLs (Media Manager); no backend storage integration exists yet.',
+
+      productMediaStorage,
+      shippingProvider,
+
+      backups: {
+        status: 'UNKNOWN',
+        note: 'No backup monitoring is configured yet. Verify backups in the database provider console.',
       },
-      shippingProvider: { status: 'NOT_CONFIGURED', note: 'Carrier integration (tracking) is data-driven; no provider is connected yet.' },
-      backups: { status: 'UNKNOWN', note: 'No backup monitoring is configured yet - verify Neon backups in the provider console.' },
+
       businessNotificationEmail: {
-        status: (settings.notifications.businessNotificationEmail || env.BUSINESS_NOTIFICATION_EMAIL) ? 'CONNECTED' : 'CONFIGURATION_REQUIRED',
-        source: settings.notifications.businessNotificationEmail ? 'settings' : 'environment',
+        status: businessNotificationEmail ? 'CONFIGURED' : 'NOT_CONFIGURED',
+        source: businessNotificationEmailSource,
       },
     },
   });
@@ -206,7 +374,20 @@ adminSettingsRouter.get('/system-health', async (_req, res) => {
 adminSettingsRouter.get('/notification-history', async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 25));
-  const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const allowedStatuses = ['PENDING', 'SENT', 'FAILED'] as const;
+
+  const status =
+    typeof req.query.status === 'string'
+      ? req.query.status
+      : undefined;
+
+  if (
+    status &&
+    !allowedStatuses.includes(status as (typeof allowedStatuses)[number])
+  ) {
+    throw badRequest('Invalid notification status');
+  }
+
   const where = status ? { status } : {};
   const [rows, total] = await Promise.all([
     prisma.notificationOutbox.findMany({
@@ -218,7 +399,6 @@ adminSettingsRouter.get('/notification-history', async (req, res) => {
       select: {
         id: true, type: true, status: true, attempts: true, lastError: true,
         createdAt: true, sentAt: true,
-        payload: true,
       },
     }),
     prisma.notificationOutbox.count({ where }),

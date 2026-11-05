@@ -7,7 +7,7 @@ import request from 'supertest';
 // deliveries, event-type validation and malformed payloads. No email is
 // actually sent (RESEND_API_KEY unset -> sending disabled).
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const SECRET = 'whsec_' + Buffer.from('webhook-test-signing-secret').toString('base64');
 process.env.RESEND_WEBHOOK_SECRET = SECRET;

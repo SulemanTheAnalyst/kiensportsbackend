@@ -23,7 +23,7 @@ import type { Express } from 'express';
 //  6. Cart-add notifications fire once per variant/cooldown, and guests
 //     never get an invented identity.
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('COD / prepaid payment lifecycle (integration)', () => {
   let app: Express;

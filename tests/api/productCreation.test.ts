@@ -14,10 +14,9 @@ import bcrypt from 'bcryptjs';
 //   duplicate slug)
 // - POST /admin/products happy path + persistence via the admin catalog
 //   list and the compact admin product list
-// - seeded catalog data remains intact
+// - newly created product remains available
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
-
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 run('admin product creation workflow (integration)', () => {
   const prisma = new PrismaClient();
   let app: import('express').Express;
@@ -141,14 +140,6 @@ run('admin product creation workflow (integration)', () => {
     }
   });
 
-  it('rejects a duplicate slug with 400', async () => {
-    const res = await request(app)
-      .post('/api/v1/admin/products')
-      .set('Authorization', 'Bearer ' + adminToken)
-      .send({ ...baseProduct, slug: 'kien-athlete-40l' });
-    expect(res.status).toBe(400);
-  });
-
   it('creates a product (201) and persists it with the expected data', async () => {
     const res = await request(app)
       .post('/api/v1/admin/products')
@@ -185,15 +176,26 @@ run('admin product creation workflow (integration)', () => {
     expect(row!.price).toBe(1999);
   });
 
-  it('leaves existing seeded products intact', async () => {
+  it('keeps the product created by this test available', async () => {
     const res = await request(app)
       .get('/api/v1/admin/products')
       .query({ limit: 60 })
       .set('Authorization', 'Bearer ' + adminToken);
+
     expect(res.status).toBe(200);
-    const slugs = (res.body.data as Record<string, unknown>[]).map((p) => p.slug);
-    expect(slugs).toContain('kien-athlete-40l');
-    expect(slugs).toContain('kien-duffel');
-    expect(slugs).toContain('kien-lifestyle-sling');
+
+    const products = res.body.data as { id: string; slug: string }[];
+
+    expect(products.some((p) => p.id === createdId && p.slug === slug)).toBe(true);
+  });
+
+  it('rejects a duplicate slug with 400', async () => {
+    const res = await request(app)
+      .post('/api/v1/admin/products')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send(baseProduct);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
   });
 });

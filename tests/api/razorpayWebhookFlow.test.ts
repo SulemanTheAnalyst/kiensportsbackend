@@ -25,7 +25,7 @@ import type { Express } from 'express';
 //  7. cross-order association (known payment id + foreign order id): rejected
 //  8. verified FAILED webhook: order cancelled, inventory released
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('razorpay webhook payment flow (integration)', () => {
   let app: Express;

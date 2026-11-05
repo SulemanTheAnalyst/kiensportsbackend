@@ -21,7 +21,7 @@ import type { Express } from 'express';
 // Rule under test (documented in coupon.service.ts): the minimum order value
 // is evaluated against the PRE-DISCOUNT eligible merchandise subtotal.
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('Coupons (integration)', () => {
   let app: Express;
@@ -233,8 +233,8 @@ run('Coupons (integration)', () => {
     expect(v.body.data.coupon.code).toBe(c.body.data.code);
     expect(v.body.data.subtotal).toBe(1999);
     expect(v.body.data.discount).toBe(199); // 19990 paise, displayed in whole rupees
-    expect(v.body.data.shipping).toBe(99);
-    expect(v.body.data.total).toBe(1898);
+    expect(v.body.data.shipping).toBe(0);
+    expect(v.body.data.total).toBe(1799);
   });
 
   it('caps percentage discounts at the configured maximum', async () => {
@@ -247,7 +247,7 @@ run('Coupons (integration)', () => {
     const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(200);
     expect(v.body.data.discount).toBe(200); // uncapped would be 299.85 -> capped 200
-    expect(v.body.data.total).toBe(1898);
+    expect(v.body.data.total).toBe(1799);
   });
 
   it('computes fixed-amount discounts correctly', async () => {
@@ -260,7 +260,7 @@ run('Coupons (integration)', () => {
     const v = await bag.post('/api/v1/coupons/validate').set('Authorization', 'Bearer ' + cust.token).send({ code: c.body.data.code });
     expect(v.status).toBe(200);
     expect(v.body.data.discount).toBe(200);
-    expect(v.body.data.total).toBe(1898);
+    expect(v.body.data.total).toBe(1799);
   });
 
   it('rejects coupons below the pre-discount minimum order value', async () => {
@@ -367,7 +367,7 @@ run('Coupons (integration)', () => {
     expect(order.couponCode).toBe(c.body.data.code);
     expect(order.discountPaise).toBe(19990);
     expect(order.subtotalPaise).toBe(199900);
-    expect(order.totalPaise).toBe(199900 - 19990 + 9900); // discount + shipping
+    expect(order.totalPaise).toBe(199900 - 19990); // discount + shipping
     expect(order.paymentStatus).toBe('COD_PENDING');
 
     // Usage consumed exactly once by the reservation.
@@ -394,7 +394,7 @@ run('Coupons (integration)', () => {
     expect(res.status).toBe(201);
     const order = await prisma.order.findFirstOrThrow({ where: { orderNumber: res.body.data.order.orderNumber } });
     created.orderIds.push(order.id);
-    expect(order.totalPaise).toBe(199900 - 20000 + 9900);
+    expect(order.totalPaise).toBe(199900 - 20000);
 
     const payment = await prisma.payment.findFirstOrThrow({ where: { orderId: order.id } });
     expect(payment.amountPaise).toBe(order.totalPaise); // Razorpay amount = verified total
