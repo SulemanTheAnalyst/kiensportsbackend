@@ -30,13 +30,32 @@ describe('money', () => {
 });
 
 describe('shipping rules (must match the frontend checkout display)', () => {
-  it('charges flat Rs 99 below Rs 2000 subtotal', () => {
-    expect(shippingPaise(199900)).toBe(9900);
+  it('charges flat Rs 129 below Rs 1999 subtotal', () => {
+    expect(shippingPaise(199899)).toBe(12900);
   });
 
-  it('is free at and above Rs 2000 subtotal', () => {
+  it('is free at and above Rs 1999 subtotal', () => {
     expect(shippingPaise(FREE_SHIPPING_THRESHOLD_PAISE)).toBe(0);
     expect(shippingPaise(499900)).toBe(0);
+  });
+});
+
+describe('computeTotals', () => {
+  it('sums line items and applies the shipping rule', () => {
+    const totals = computeTotals([
+      { unitPricePaise: 499900, quantity: 1 },
+      { unitPricePaise: 199900, quantity: 2 },
+    ]);
+    // Subtotal is above Rs 1999, so shipping is free.
+    expect(totals.subtotalPaise).toBe(899700);
+    expect(totals.shippingPaise).toBe(0);
+    expect(totals.totalPaise).toBe(899700);
+  });
+
+  it('adds Rs 129 shipping when subtotal is below the threshold', () => {
+    const totals = computeTotals([{ unitPricePaise: 179900, quantity: 1 }]);
+    expect(totals.shippingPaise).toBe(12900);
+    expect(totals.totalPaise).toBe(192800);
   });
 });
 
@@ -52,9 +71,9 @@ describe('computeTotals', () => {
     expect(totals.totalPaise).toBe(899700);
   });
 
-  it('adds Rs 99 shipping when subtotal is below the threshold', () => {
-    const totals = computeTotals([{ unitPricePaise: 199900, quantity: 1 }]);
-    expect(totals.shippingPaise).toBe(9900);
-    expect(totals.totalPaise).toBe(209800);
+  it('adds Rs 129 shipping when subtotal is below the threshold', () => {
+  const totals = computeTotals([{ unitPricePaise: 179900, quantity: 1 }]);
+  expect(totals.shippingPaise).toBe(12900);
+  expect(totals.totalPaise).toBe(192800);
   });
 });

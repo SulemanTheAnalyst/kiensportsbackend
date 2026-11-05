@@ -11,7 +11,7 @@ export const rupeesToPaise = (rupees: number): number => {
 export const paiseToRupees = (paise: number): number => Math.trunc(paise / 100);
 
 // ---- Shipping ----
-// The launch rule (free above Rs 2000 subtotal, otherwise flat Rs 99) is the
+// The launch rule (free above Rs 1999 subtotal, otherwise flat Rs 129) is the
 // DEFAULT. The live values are configured by the administrator in Settings
 // (Settings -> Payments & Checkout) and served from the backend settings
 // service; the frontend always displays what the backend enforces.

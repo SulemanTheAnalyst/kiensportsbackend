@@ -12,7 +12,7 @@ import request from 'supertest';
 // Authorization is enforced by the backend for every route: an anonymous
 // request must receive 401 and an authenticated CUSTOMER must receive 403.
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const ADMIN_READ_ENDPOINTS = [
   '/admin/dashboard/summary',

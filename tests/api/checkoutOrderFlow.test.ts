@@ -16,7 +16,7 @@ import type { Express } from 'express';
 //  5. cart/order thumbnails only ever use IMAGE media (never a video URL)
 //     even when a VIDEO row sorts first, and prefer the item's colour image
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('checkout order flow: auth, validation, media thumbnails (integration)', () => {
   let app: Express;
@@ -164,7 +164,7 @@ run('checkout order flow: auth, validation, media thumbnails (integration)', () 
     // Server-side pricing: the VARIANT price (Rs 1499), not the browser price
     // and not the product's Rs 1 base price.
     expect(stored.items[0].unitPricePaise).toBe(149900);
-    expect(stored.totalPaise).toBe(149900 + 9900); // Rs 99 flat shipping under Rs 2000
+    expect(stored.totalPaise).toBe(149900 + 12900); // Rs 99 flat shipping under Rs 2000
     expect(stored.items[0].productName).toBe(product.name);
   });
 

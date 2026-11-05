@@ -21,7 +21,7 @@ import bcrypt from 'bcryptjs';
 // No real Cloudinary credentials are used: the storage module exposes a
 // test seam (__setStorageForTests) and CI injects a fake implementation.
 
-const run = process.env.DATABASE_URL ? describe : describe.skip;
+const run = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 run('admin product management workflow (integration)', () => {
   const prisma = new PrismaClient();
@@ -194,14 +194,53 @@ run('admin product management workflow (integration)', () => {
   });
 
   it('rejects a PATCH carrying an image id from another product (400)', async () => {
-    // Seed products exist and have images; grab one of their image ids.
-    const seeded = await prisma.product.findFirst({ where: { slug: 'kien-athlete-40l' }, include: { images: true } });
-    expect(seeded).toBeTruthy();
-    const foreignImageId = seeded!.images[0].id;
+    const foreignSlug = 'ci-mgmt-foreign-' + stamp;
+    const foreignSku = 'KIEN-MGMT-FOR-' + stamp;
+
+    const foreignProductResponse = await request(app)
+      .post('/api/v1/admin/products')
+      .set('Authorization', 'Bearer ' + adminToken)
+      .send({
+        ...baseProduct,
+        slug: foreignSlug,
+        name: 'CI Foreign Product',
+        variants: [
+          {
+            sku: foreignSku,
+            colorName: 'Matte Black',
+            colorHex: '#1a1a1a',
+            inventoryQty: 1,
+          },
+        ],
+      });
+
+    expect(foreignProductResponse.status).toBe(201);
+
+    const foreignProductId = foreignProductResponse.body.data.id as string;
+    createdProductIds.push(foreignProductId);
+
+    const foreignProduct = await prisma.product.findUnique({
+      where: { id: foreignProductId },
+      include: { images: true },
+    });
+
+    expect(foreignProduct).toBeTruthy();
+    expect(foreignProduct!.images.length).toBeGreaterThan(0);
+
+    const foreignImageId = foreignProduct!.images[0].id;
+
     const res = await request(app)
       .patch('/api/v1/admin/products/' + productId)
       .set('Authorization', 'Bearer ' + adminToken)
-      .send({ images: [{ id: foreignImageId, url: 'https://example.com/x.jpg' }] });
+      .send({
+        images: [
+          {
+            id: foreignImageId,
+            url: 'https://example.com/x.jpg',
+          },
+        ],
+      });
+
     expect(res.status).toBe(400);
   });
 
@@ -333,16 +372,44 @@ run('admin product management workflow (integration)', () => {
   });
 
   it('reports 503 STORAGE_NOT_CONFIGURED when storage env vars are unset', async () => {
-    // CI does not define CLOUDINARY_* vars, so the real implementation is
-    // unconfigured by default.
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
-    const res = await request(app)
-      .post('/api/v1/admin/images')
-      .set('Authorization', 'Bearer ' + adminToken)
-      .set('Content-Type', 'application/octet-stream')
-      .send(png);
-    expect(res.status).toBe(503);
-    expect(res.body.error.code).toBe('STORAGE_NOT_CONFIGURED');
+    const names = [
+      'CLOUDINARY_CLOUD_NAME',
+      'CLOUDINARY_API_KEY',
+      'CLOUDINARY_API_SECRET',
+    ] as const;
+
+    const saved = Object.fromEntries(
+      names.map((name) => [name, process.env[name]]),
+    );
+
+    try {
+      for (const name of names) {
+        delete process.env[name];
+      }
+
+      const png = Buffer.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        0, 0, 0, 0,
+      ]);
+
+      const res = await request(app)
+        .post('/api/v1/admin/images')
+        .set('Authorization', 'Bearer ' + adminToken)
+        .set('Content-Type', 'application/octet-stream')
+        .send(png);
+
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe('STORAGE_NOT_CONFIGURED');
+
+      for (const name of names) {
+        expect(res.body.error.missingVariables).toContain(name);
+      }
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
   });
 
   it('accepts a valid PNG and returns the hosted url (fake storage injected)', async () => {
