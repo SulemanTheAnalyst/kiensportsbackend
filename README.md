@@ -116,3 +116,8 @@ This project is proprietary software owned by KIEN Sports Private Limited.
 See [LICENSE](./LICENSE). No permission to copy, distribute, modify, or
 commercially exploit the code is granted without written authorization.
 Third-party dependencies remain governed by their own open-source licenses.
+
+
+## Shipping provider integration
+
+See [docs/SHIPROCKET.md](docs/SHIPROCKET.md) for Shiprocket configuration and the current integration scope.

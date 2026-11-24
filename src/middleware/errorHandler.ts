@@ -9,7 +9,19 @@ export const apiLimiter = (windowMs: number, max: number) =>
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    handler: (_req, _res, next) => next(new ApiError(429, 'RATE_LIMITED', 'Too many requests, slow down')),
+
+    // Rate limits remain active in development and production.
+    // Tests should not fail because multiple test cases share one IP.
+    skip: () => process.env.NODE_ENV === 'test',
+
+    handler: (_req, _res, next) =>
+      next(
+        new ApiError(
+          429,
+          'RATE_LIMITED',
+          'Too many requests, slow down',
+        ),
+      ),
   });
 
 export const notFoundHandler = (req: Request, _res: Response, next: NextFunction) => {

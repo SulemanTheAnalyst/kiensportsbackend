@@ -394,19 +394,34 @@ model Payment {
 }
 
 model Shipment {
-  id             String   @id @default(cuid())
-  orderId        String
-  carrier        String?
-  trackingNumber String?
-  status         String   @default("PENDING") // PENDING | IN_TRANSIT | OUT_FOR_DELIVERY | DELIVERED | EXCEPTION
-  shippedAt      DateTime?
-  deliveredAt    DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                          String    @id @default(cuid())
+  orderId                     String
+  carrier                     String?
+  trackingNumber              String?
+  status                      String    @default("PENDING") // PENDING | IN_TRANSIT | OUT_FOR_DELIVERY | DELIVERED | EXCEPTION
+  shippedAt                   DateTime?
+  deliveredAt                 DateTime?
+  // Provider metadata. Multiple parcels remain supported by the database.
+  provider                    String?
+  shiprocketOrderId           String?
+  shiprocketShipmentId        String?
+  shiprocketAwbCode           String?
+  shiprocketCourierId         Int?
+  shiprocketCourierName       String?
+  shiprocketLabelUrl          String?
+  shiprocketTrackingUrl       String?
+  shiprocketPickupId          String?
+  shiprocketPickupScheduledAt DateTime?
+  providerStatus              String?
+  lastTrackingSyncAt          DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   @@index([orderId])
+  @@index([provider, shiprocketOrderId])
+  @@index([shiprocketAwbCode])
 }
 
 // ---------------------------------------------------------------- returns / refunds

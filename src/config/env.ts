@@ -1,33 +1,35 @@
-import 'dotenv/config';
-import { z } from 'zod';
+import "dotenv/config";
+import { z } from "zod";
 
 const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  NODE_ENV: z
+    .enum(["development", "test", "production"])
+    .default("development"),
   PORT: z.coerce.number().default(3000),
-  API_BASE_PATH: z.string().default('/api/v1'),
-  CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  API_BASE_PATH: z.string().default("/api/v1"),
+  CORS_ORIGIN: z.string().default("http://localhost:5173"),
   DATABASE_URL: z.string().min(1),
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
-  ACCESS_TOKEN_TTL: z.string().default('15m'),
+  ACCESS_TOKEN_TTL: z.string().default("15m"),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().default(30),
   BCRYPT_COST: z.coerce.number().default(12),
-  PAYMENT_PROVIDER: z.enum(['mock', 'razorpay']).default('mock'),
-  RAZORPAY_KEY_ID: z.string().optional().default(''),
-  RAZORPAY_KEY_SECRET: z.string().optional().default(''),
-  PAYMENT_WEBHOOK_SECRET: z.string().default('change-me'),
-  FRONTEND_URL: z.string().default('http://localhost:5173'),
+  PAYMENT_PROVIDER: z.enum(["mock", "razorpay"]).default("mock"),
+  RAZORPAY_KEY_ID: z.string().optional().default(""),
+  RAZORPAY_KEY_SECRET: z.string().optional().default(""),
+  PAYMENT_WEBHOOK_SECRET: z.string().default("change-me"),
+  FRONTEND_URL: z.string().default("http://localhost:5173"),
   // ---- Email (Resend) ----
   // All optional: the app boots without email so local development and CI do
   // not require a Resend account. Production health exposes missing config.
-  RESEND_API_KEY: z.string().optional().default(''),
+  RESEND_API_KEY: z.string().optional().default(""),
   // Svix signing secret (whsec_...) shown once when the webhook is created in
   // the Resend dashboard. NOT the same value as RESEND_API_KEY.
-  RESEND_WEBHOOK_SECRET: z.string().optional().default(''),
-  EMAIL_FROM: z.string().default('KIEN Sports <no-reply@kiensports.com>'),
-  EMAIL_REPLY_TO: z.string().optional().default(''),
-  SUPPORT_EMAIL: z.string().default('support@kiensports.com'),
-  BUSINESS_NOTIFICATION_EMAIL: z.string().optional().default(''),
+  RESEND_WEBHOOK_SECRET: z.string().optional().default(""),
+  EMAIL_FROM: z.string().default("KIEN Sports <no-reply@kiensports.com>"),
+  EMAIL_REPLY_TO: z.string().optional().default(""),
+  SUPPORT_EMAIL: z.string().default("support@kiensports.com"),
+  BUSINESS_NOTIFICATION_EMAIL: z.string().optional().default(""),
   // ---- Checkout / payment lifecycle ----
   // Prepaid checkout attempts older than this many minutes are expired:
   // payment marked EXPIRED, order CANCELLED, inventory reservation released.
@@ -38,26 +40,32 @@ const envSchema = z.object({
   // COD fulfilment policy: 'true' allows dispatch while payment is still
   // COD_PENDING (cash collected on/after delivery); 'false' requires the
   // admin to record collection before dispatch.
-  COD_ALLOW_DISPATCH_UNPAID: z.string().default('true'),
+  COD_ALLOW_DISPATCH_UNPAID: z.enum(["true", "false"]).default("true"),
   // Base URL used to build admin links inside business notifications,
   // e.g. https://kiensports.com/admin/orders
-  ADMIN_ORDER_URL_BASE: z.string().optional().default(''),
+  ADMIN_ORDER_URL_BASE: z.string().optional().default(""),
   // ---- WhatsApp Business Platform (Meta Cloud API) - optional, OFF by default.
   // Requires a Meta Business account, a registered phone number and approved
   // templates; Meta charges per-conversation pricing. Until a real test
   // message succeeds, notifications must be treated as email-only.
-  WHATSAPP_ENABLED: z.string().default('false'),
-  WHATSAPP_TOKEN: z.string().optional().default(''),
-  WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(''),
-  WHATSAPP_RECIPIENT: z.string().optional().default(''),
+  WHATSAPP_ENABLED: z.string().default("false"),
+  WHATSAPP_TOKEN: z.string().optional().default(""),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional().default(""),
+  WHATSAPP_RECIPIENT: z.string().optional().default(""),
   // ---- Shiprocket API ----
-  SHIPROCKET_ENABLED: z.enum(['true', 'false']).default('false'),
-  SHIPROCKET_EMAIL: z.string().optional().default(''),
-  SHIPROCKET_PASSWORD: z.string().optional().default(''),
-  SHIPROCKET_PICKUP_LOCATION: z.string().optional().default(''),
-  SHIPROCKET_WEBHOOK_TOKEN: z.string().optional().default(''),
+  SHIPROCKET_ENABLED: z.enum(["true", "false"]).default("false"),
+  SHIPROCKET_EMAIL: z.string().optional().default(""),
+  SHIPROCKET_PASSWORD: z.string().optional().default(""),
+  SHIPROCKET_PICKUP_LOCATION: z.string().optional().default(""),
+  SHIPROCKET_WEBHOOK_TOKEN: z.string().optional().default(""),
 
-  SHIPROCKET_PICKUP_PINCODE: z.string().default('800006'),
+  SHIPROCKET_PICKUP_PINCODE: z
+    .string()
+    .regex(
+      /^\d{6}$/,
+      "SHIPROCKET_PICKUP_PINCODE must be a valid 6-digit PIN code",
+    )
+    .default("800006"),
   SHIPROCKET_PACKAGE_WEIGHT: z.coerce.number().positive().default(0.5),
   SHIPROCKET_PACKAGE_LENGTH: z.coerce.number().positive().default(20),
   SHIPROCKET_PACKAGE_BREADTH: z.coerce.number().positive().default(13.5),
@@ -67,9 +75,9 @@ const envSchema = z.object({
 const parsed = envSchema.safeParse(process.env);
 if (!parsed.success) {
   // Fail fast at boot; never log values, only the missing keys.
-  const keys = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
-  throw new Error('Invalid environment configuration. Check: ' + keys);
+  const keys = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
+  throw new Error("Invalid environment configuration. Check: " + keys);
 }
 
 export const env = parsed.data;
-export const isProd = env.NODE_ENV === 'production';
+export const isProd = env.NODE_ENV === "production";

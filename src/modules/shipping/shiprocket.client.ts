@@ -1,7 +1,6 @@
-import { env } from '../../config/env';
+import { env } from "../../config/env";
 
-const SHIPROCKET_BASE_URL =
-  'https://apiv2.shiprocket.in/v1/external';
+const SHIPROCKET_BASE_URL = "https://apiv2.shiprocket.in/v1/external";
 
 interface ShiprocketAuthResponse {
   token?: string;
@@ -19,30 +18,36 @@ interface CachedToken {
 }
 
 let cachedToken: CachedToken | null = null;
+let authInFlight: Promise<string> | null = null;
 
 // Authenticate using the dedicated Shiprocket API user.
-export const authenticateShiprocket = async (): Promise<string> => {
+const performShiprocketAuthentication = async (): Promise<string> => {
   if (!env.SHIPROCKET_EMAIL || !env.SHIPROCKET_PASSWORD) {
-    throw new Error('Shiprocket API credentials are not configured.');
+    throw new Error("Shiprocket API credentials are not configured.");
   }
 
-  const response = await fetch(
-    `${SHIPROCKET_BASE_URL}/auth/login`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        email: env.SHIPROCKET_EMAIL,
-        password: env.SHIPROCKET_PASSWORD,
-      }),
-      signal: AbortSignal.timeout(15000),
+  const response = await fetch(`${SHIPROCKET_BASE_URL}/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
     },
-  );
+    body: JSON.stringify({
+      email: env.SHIPROCKET_EMAIL,
+      password: env.SHIPROCKET_PASSWORD,
+    }),
+    signal: AbortSignal.timeout(15000),
+  });
 
-  const data = (await response.json()) as ShiprocketAuthResponse;
+  let data: ShiprocketAuthResponse;
+
+  try {
+    data = (await response.json()) as ShiprocketAuthResponse;
+  } catch {
+    throw new Error(
+      `Shiprocket authentication returned an invalid response. HTTP ${response.status}`,
+    );
+  }
 
   if (!response.ok || !data.token) {
     throw new Error(
@@ -62,6 +67,14 @@ export const authenticateShiprocket = async (): Promise<string> => {
   return data.token;
 };
 
+export const authenticateShiprocket = async (): Promise<string> => {
+  if (authInFlight) return authInFlight;
+  authInFlight = performShiprocketAuthentication().finally(() => {
+    authInFlight = null;
+  });
+  return authInFlight;
+};
+
 // Return the cached token or authenticate again.
 export const getShiprocketToken = async (): Promise<string> => {
   if (cachedToken && Date.now() < cachedToken.expiresAt) {
@@ -76,83 +89,62 @@ export const shiprocketRequest = async <T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> => {
-  if (env.SHIPROCKET_ENABLED !== 'true') {
-    throw new Error('Shiprocket integration is currently disabled.');
+  if (env.SHIPROCKET_ENABLED !== "true") {
+    throw new Error("Shiprocket integration is currently disabled.");
   }
 
-  const token = await getShiprocketToken();
+  const method = (options.method ?? "GET").toUpperCase();
 
-  const response = await fetch(
-    `${SHIPROCKET_BASE_URL}${endpoint}`,
-    {
+  const makeRequest = async (token: string) =>
+    fetch(`${SHIPROCKET_BASE_URL}${endpoint}`, {
       ...options,
+      method,
       headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
+        Accept: "application/json",
+        "Content-Type": "application/json",
         ...options.headers,
         Authorization: `Bearer ${token}`,
       },
       signal: options.signal ?? AbortSignal.timeout(20000),
-    },
-  );
+    });
+
+  let token = await getShiprocketToken();
+  let response = await makeRequest(token);
+
+  // Retry only safe, read-only requests after an authentication failure.
+  if (response.status === 401 && ["GET", "HEAD"].includes(method)) {
+    // Clear the cached token only if it is still the token used
+    // by this request. Another request may already have refreshed it.
+    if (cachedToken?.value === token) {
+      cachedToken = null;
+    }
+
+    token = await getShiprocketToken();
+    response = await makeRequest(token);
+  }
 
   const responseText = await response.text();
 
-  let data: unknown;
+  let data: unknown = null;
 
   try {
     data = responseText ? JSON.parse(responseText) : null;
   } catch {
-    throw new Error('Shiprocket returned an invalid response.');
-  }
-
-  // If the token is rejected, authenticate once more and retry.
-  if (response.status === 401) {
-    cachedToken = null;
-
-    const refreshedToken = await authenticateShiprocket();
-
-    const retryResponse = await fetch(
-      `${SHIPROCKET_BASE_URL}${endpoint}`,
-      {
-        ...options,
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          ...options.headers,
-          Authorization: `Bearer ${refreshedToken}`,
-        },
-        signal: options.signal ?? AbortSignal.timeout(20000),
-      },
+    throw new Error(
+      `Shiprocket returned an invalid response. HTTP ${response.status}`,
     );
-
-    const retryText = await retryResponse.text();
-
-    let retryData: unknown;
-
-    try {
-      retryData = retryText ? JSON.parse(retryText) : null;
-    } catch {
-      throw new Error('Shiprocket returned an invalid retry response.');
-    }
-
-    if (!retryResponse.ok) {
-      const error = retryData as ShiprocketErrorResponse;
-
-      throw new Error(
-        error.message ?? `Shiprocket API error: HTTP ${retryResponse.status}`,
-      );
-    }
-
-    return retryData as T;
   }
 
   if (!response.ok) {
-    const error = data as ShiprocketErrorResponse;
+    const message =
+      data &&
+      typeof data === "object" &&
+      "message" in data &&
+      typeof data.message === "string"
+        ? data.message
+        : `Shiprocket request failed. HTTP ${response.status}`;
 
-    throw new Error(
-      error.message ?? `Shiprocket API error: HTTP ${response.status}`,
-    );
+    throw new Error(message);
   }
 
   return data as T;
@@ -167,7 +159,7 @@ export const checkShiprocketServiceability = async (params: {
   const query = new URLSearchParams({
     pickup_postcode: env.SHIPROCKET_PICKUP_PINCODE,
     delivery_postcode: params.deliveryPincode,
-    cod: params.cod ? '1' : '0',
+    cod: params.cod ? "1" : "0",
     weight: String(env.SHIPROCKET_PACKAGE_WEIGHT),
     length: String(env.SHIPROCKET_PACKAGE_LENGTH),
     breadth: String(env.SHIPROCKET_PACKAGE_BREADTH),
@@ -177,7 +169,7 @@ export const checkShiprocketServiceability = async (params: {
   return shiprocketRequest<unknown>(
     `/courier/serviceability/?${query.toString()}`,
     {
-      method: 'GET',
+      method: "GET",
     },
   );
 };
